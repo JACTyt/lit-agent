@@ -1,19 +1,15 @@
-from agent.agent import init_agent
+"""Launcher for the Lit-Agent console UI.
 
-agent = init_agent()
+The interactive UI logic lives in `ui/console_ui.py`. This module simply
+imports and runs it. Old UI/streaming code was moved to `ui/console_ui.py`.
 """
-response = agent.invoke(
-    {"messages": [{"role": "user", "content": "Find the book about flowers"}]}    
-)
 
-print(response)
-"""
-for step in agent.stream(
-    {"messages": [{"role": "user", "content": "Tell me about rose from book The Proud Rose"}]}
-):
-    print(step)
+from ui.console_ui import run
 
-for step in agent.stream(
-    {"messages": [{"role": "user", "content": "Tell me about why ants where surprised in book The Ant and the Grasshopper"}]}
-):
-    print(step)
+
+def main():
+    run()
+
+
+if __name__ == "__main__":
+    main()
