@@ -4,6 +4,7 @@ Provides a friendly chat loop, session history, and saves sessions to disk.
 """
 from agent.agent import init_agent, AGENT_NAME
 from scripts.extract_answer import extract_answer
+from rag.ingest import ingest_books
 import datetime
 import os
 import json
@@ -55,6 +56,7 @@ def run(session_dir: str = "sessions"):
                     "  /save     : Save the current session to a JSON file in the sessions/ folder",
                     "  /extract  : Run the concise-answer extractor over the session raw outputs",
                     "  /restore <id> : Restore a previously saved session by id or name",
+                    "  /reimport : Re-ingest books from library/ (fallback: books/) into ChromaDB",
                 ]
                 help_text = "\n".join(help_lines)
                 print(help_text)
@@ -146,6 +148,28 @@ def run(session_dir: str = "sessions"):
                         json.dump({"history": history, "session_id": session_id}, fh, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
+                continue
+            if cmd == "/reimport":
+                print("Re-importing books from library/ (fallback: books/) ...")
+                try:
+                    vectorstore, vector_count = ingest_books()
+                    result_msg = f"Successfully re-imported ChromaDB with {vector_count} vectors!"
+                    print(result_msg)
+                    history.append({"user": user_input, "ai": result_msg, "raw": ""})
+                    try:
+                        with open(autosave_path, "w", encoding="utf-8") as fh:
+                            json.dump({"history": history, "session_id": session_id}, fh, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    error_msg = f"Failed to re-import books: {e}"
+                    print(error_msg)
+                    history.append({"user": user_input, "ai": error_msg, "raw": ""})
+                    try:
+                        with open(autosave_path, "w", encoding="utf-8") as fh:
+                            json.dump({"history": history, "session_id": session_id}, fh, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
                 continue
             print("Unknown command. Type /help for commands.")
             continue

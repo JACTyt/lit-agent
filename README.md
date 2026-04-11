@@ -7,6 +7,7 @@ Key features
 - Vector store: local Chroma/SQLite-backed embedding database for fast similarity search.
 - Agent tools: scripts and helper functions to query, summarize, and extract structured data.
 - RAG workflows: combine retrieved passages with LLM prompts to produce grounded answers.
+- Automatic ingestion sync: retrieval checks whether `library/` or `books/` changed and re-ingests when needed.
 
 Quick start
 
@@ -79,20 +80,40 @@ Session name (optional): proud_rose_notes
 The session JSON and named log will be available in the `sessions/` folder.
 
 Typical workflow
-- Ingest books: `python rag/ingest.py --path "books/YourBook.txt"`
+- Ingest/sync books: `python rag/ingest.py`
 - Inspect DB: `python rag/chroma_inspector.py`
 - Query agent: `python main.py --query "Summarize the moral of The Ant and the Grasshopper"`
+
+Automatic ingestion behavior
+---------------------------
+
+- Source directory priority:
+	1. `library/` (if present)
+	2. `books/`
+- Before retrieval, the app compares current `.txt` files (name, size, mtime) against `rag/chroma_db/ingestion_state.json`.
+- If files were added/updated/removed, the vector DB is rebuilt automatically.
+
+How to verify auto ingestion
+----------------------------
+
+1. Add a new `.txt` file into `library/` (or `books/` if `library/` does not exist).
+2. Start the app with `python main.py`.
+3. Ask a question that should match content from the new file.
+4. Confirm the answer includes retrieved context from that file.
+
+You can also run `python rag/ingest.py` directly to see whether ingestion runs or reports that the index is already up to date.
 
 Repository layout
 - `agent/` — agent logic and helper tools
 - `rag/` — ingestion, retriever, and Chroma DB utilities
-- `books/` — sample plain-text books
-- `chroma_db/` — local Chroma/SQLite database files
+- `library/` — active plain-text books source directory
+- `books/` — optional legacy/fallback books directory
+- `rag/chroma_db/` — local Chroma/SQLite database files
 - `main.py` — example runner
 
 Configuration
 - Set any required LLM provider API keys as environment variables (for example `OPENAI_API_KEY`).
-- The local Chroma DB path defaults to `chroma_db/`; change paths in the configuration or scripts if needed.
+- The local Chroma DB path defaults to `rag/chroma_db/`; change paths in the configuration or scripts if needed.
 
 Contributing
 - Fork the repo, create a branch, add focused changes and tests, then open a pull request.

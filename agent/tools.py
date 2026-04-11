@@ -1,7 +1,8 @@
 from langchain.tools import tool
-from rag.retreiver import get_retriever
+from rag.retriever import get_retriever
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from rag.ingest import ensure_books_ingested
 from dotenv import load_dotenv
 import os
 
@@ -10,10 +11,19 @@ DB_PATH = "rag/chroma_db"
 
 # Create embeddings function
 embeddings = OpenAIEmbeddings()
-vector_store = Chroma(
-    persist_directory=DB_PATH,
-    embedding_function=embeddings
-)
+
+
+def _get_vector_store() -> Chroma:
+    # Keep retrieval index in sync with local books/library before each retrieval action.
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        # Fall back to existing persisted DB if re-ingestion cannot run right now.
+        pass
+    return Chroma(
+        persist_directory=DB_PATH,
+        embedding_function=embeddings
+    )
 """
 @tool("MultiBookSearch", description="Searches all ingested books")
 def search_books(query: str, book_name: str = None) -> str:
@@ -38,6 +48,7 @@ def search_books(query: str, book_name: str = None) -> str:
 @tool("GetContext",response_format="content_and_artifact", description="Get context/information in book")
 def retrieve_context(query: str):
     """Retrieve information to help answer a query."""
+    vector_store = _get_vector_store()
     retrieved_docs = vector_store.similarity_search(query, k=2)
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
@@ -69,6 +80,7 @@ def summarize(query_or_text: str, book_name: str = None) -> str:
             # Treat as raw text to summarize
             docs = [type("D", (), {"metadata": {"source": "input"}, "page_content": query_or_text})]
         else:
+            vector_store = _get_vector_store()
             docs = vector_store.similarity_search(query_or_text, k=4)
 
     serialized = "\n\n".join(f"Source: {getattr(d, 'metadata', {})}\nContent: {getattr(d, 'page_content', '')}" for d in docs)
@@ -105,6 +117,7 @@ def moral_creator(query: str, book_name: str = None) -> str:
         except Exception:
             docs = retriever._get_relevant_documents(query, run_manager=None)
     else:
+        vector_store = _get_vector_store()
         docs = vector_store.similarity_search(query, k=4)
 
     combined = "\n\n".join(d.page_content for d in docs)
