@@ -116,16 +116,48 @@ Classify The Ant and the Grasshopper
 ```
 
 ## Configuration
-- Set any required LLM provider API keys as environment variables, for example `OPENAI_API_KEY`.
-- Optional environment overrides:
-  - `AGENT_NAME` to change the displayed agent name.
-  - `LLM_MODEL` to choose a different model string used by the agent.
+- Set provider configuration in `.env`.
+- `LLM_PROVIDER` supports `openai` or `ollama`.
+- `LLM_MODEL` is shared and should match the selected provider.
+- `AGENT_NAME` changes the displayed agent name.
+
+### OpenAI example
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_EMBED_MODEL=text-embedding-3-small
+```
+
+### Ollama example
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_EMBED_MODEL=nomic-embed-text
+```
+
+### Ollama local setup
+```powershell
+# Option A: start the local Ollama runtime explicitly
+ollama serve
+
+# Option B: launch runtime via Ollama launch workflow
+ollama launch
+
+# Pull models used by this project
+ollama pull llama3.1
+ollama pull nomic-embed-text
+```
+
 - The local Chroma DB path defaults to `rag/chroma_db/`.
 
 ## Troubleshooting
 - Ensure book files are UTF-8 encoded if ingestion fails.
 - Improve retrieval quality by adjusting chunk size or the embedding model.
 - Restart the app after editing files in `domain_knowledge/`.
+- If `LLM_PROVIDER=ollama`, ensure Ollama is running and the configured models are pulled.
+- If `LLM_PROVIDER=openai`, ensure `OPENAI_API_KEY` is present.
 
 ## License
 - See `LICENSE.md` for license details.

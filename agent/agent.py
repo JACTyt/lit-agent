@@ -1,7 +1,7 @@
 from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain_openai import ChatOpenAI
 from agent.tools import toolbox
+from agent.llm_provider import get_chat_llm
 from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
 
 import os
@@ -47,6 +47,8 @@ SYSTEM_PROMPT = (
     f"You are {AGENT_NAME}, a librarian-domain expert and virtual library assistant with access to a local book database."
     " Your job is to act like a careful librarian: classify books consistently, recommend useful organization schemes, summarize plots accurately, create original stories, and explain a book's motivation, moral, or lesson when asked."
     " When the user asks to create, read, update, or rename a book, use the library management tools and keep every file operation inside library/."
+    " For any user request that asks to create, generate, write, or save a story/book, you MUST call CreateBook before giving a final answer."
+    " Do not return a chat-only story for creation requests; first persist via CreateBook, then report the saved file path and short confirmation."
     " For story creation, it is acceptable to use more than one API call: first draft an outline or parts plan, then generate the story in sections, then assemble and refine the final narrative."
     " When the user asks for classification, use the ClassifyBook tool and present the result as structured metadata."
     " Use only the ingested books and retrieved passages as your evidence when answering book-specific questions. If the context is insufficient, say so clearly instead of guessing."
@@ -58,7 +60,7 @@ SYSTEM_PROMPT = (
     f"{DOMAIN_KNOWLEDGE if DOMAIN_KNOWLEDGE else 'No domain knowledge files were found.'}"
 )
 
-llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
+llm = get_chat_llm(temperature=0)
 
 # Configure tool-call limits to avoid infinite cycling:
 # - Per-tool thread limit (default 3): prevents any single tool from being

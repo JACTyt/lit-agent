@@ -3,7 +3,7 @@ import json
 import shutil
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from agent.llm_provider import get_embeddings
 from langchain_chroma import Chroma
 import chromadb
 from dotenv import load_dotenv
@@ -170,7 +170,7 @@ def ingest_books(books_dir: str = BOOKS_DIR, db_path: str = DB_PATH, collection_
                 continue
     
     # Initialize embeddings
-    embeddings = OpenAIEmbeddings()
+    embeddings = get_embeddings()
     
     # Create Chroma vectorstore and persist
     vectorstore = Chroma.from_documents(

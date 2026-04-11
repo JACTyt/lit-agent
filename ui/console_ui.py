@@ -10,10 +10,32 @@ import os
 import json
 import logging
 import sys
+import re
 
 
 def _safe_filename(name: str) -> str:
     return "session_" + "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
+
+
+def _looks_like_story_create_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    asks_create = any(word in lowered for word in ("create", "generate", "write", "save"))
+    asks_story = any(word in lowered for word in ("story", "book", "fable", "tale"))
+    return asks_create and asks_story
+
+
+def _has_saved_path_signal(text: str) -> bool:
+    content = text or ""
+    if "status\": \"created\"" in content.lower():
+        return True
+    # Detect either JSON-like path keys or plain absolute/relative txt paths.
+    if re.search(r'"path"\s*:\s*"[^"]+\\.txt"', content, flags=re.IGNORECASE):
+        return True
+    if re.search(r'\b[a-zA-Z]:\\[^\n\r]*\\.txt\b', content):
+        return True
+    if re.search(r'\blibrary[\\/][^\n\r]*\\.txt\b', content, flags=re.IGNORECASE):
+        return True
+    return False
 
 
 def run(session_dir: str = "sessions"):
@@ -199,6 +221,17 @@ def run(session_dir: str = "sessions"):
         # Post-process concise answer
         concise = extract_answer(collected)
         print(f"{AGENT_NAME}: {concise}")
+
+        # Guardrail: detect create/save story requests that did not persist a file.
+        if _looks_like_story_create_request(user_input):
+            combined_output = f"{collected}\n{concise}"
+            if not _has_saved_path_signal(combined_output):
+                warning = (
+                    "Warning: your request looked like story creation, but no saved .txt path was detected. "
+                    "Ask again with: 'Create and save the story into library/'."
+                )
+                print(f"{AGENT_NAME}: {warning}")
+
         history.append({"user": user_input, "ai": concise, "raw": collected})
         # Log concise answer
         try:

@@ -1,5 +1,5 @@
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
+from agent.llm_provider import get_embeddings
 from rag.ingest import ensure_books_ingested
 
 DB_PATH = "rag/chroma_db"
@@ -12,7 +12,7 @@ def get_retriever(book_name=None):
         # Fall back to existing persisted DB if re-ingestion cannot run right now.
         pass
 
-    embeddings = OpenAIEmbeddings()
+    embeddings = get_embeddings()
     vectorstore = Chroma(
         persist_directory=DB_PATH,
         embedding_function=embeddings,

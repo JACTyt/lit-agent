@@ -1,7 +1,7 @@
 from langchain.tools import tool
 from rag.retriever import get_retriever
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from agent.llm_provider import get_chat_llm, get_embeddings
 from rag.ingest import ensure_books_ingested
 from dotenv import load_dotenv
 import json
@@ -14,7 +14,7 @@ DB_PATH = "rag/chroma_db"
 LIBRARY_DIR = Path("library")
 
 # Create embeddings function
-embeddings = OpenAIEmbeddings()
+embeddings = get_embeddings()
 
 
 def _library_root() -> Path:
@@ -155,12 +155,41 @@ def _extract_json_object(text: str) -> dict:
 
 
 def _call_llm(prompt: str, temperature: float = 0.7) -> str:
-    llm = ChatOpenAI(
-        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        temperature=temperature,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    llm = get_chat_llm(temperature=temperature)
     return _model_response_to_text(llm(prompt))
+
+
+def _strip_generated_headers(text: str) -> str:
+    """Remove accidental header blocks from generated story text.
+
+    Some model outputs may include their own Title/Genre/Moral lines. We keep a
+    single canonical header written by CreateBook and store only narrative text
+    in the Story section.
+    """
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    filtered = []
+    skipping_prefix = True
+    header_keys = (
+        "title:",
+        "genre:",
+        "theme:",
+        "audience:",
+        "reading level:",
+        "moral:",
+        "story:",
+    )
+
+    for line in lines:
+        stripped = line.strip().lower()
+        if skipping_prefix and (not stripped or stripped.startswith(header_keys)):
+            continue
+        skipping_prefix = False
+        filtered.append(line)
+
+    return "\n".join(filtered).strip()
 
 
 def _get_vector_store() -> Chroma:
@@ -322,6 +351,9 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
     except Exception:
         part_two = ""
 
+    part_one = _strip_generated_headers(part_one)
+    part_two = _strip_generated_headers(part_two)
+
     if not part_one:
         part_one = (
             f"{final_record['title']} opened with two detectives working a case that looked simple at first. "
@@ -334,7 +366,7 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
             f"By combining their skills and staying honest with one another, they uncovered the murderer and learned that {final_record['moral'].lower()}"
         )
 
-    story_body = f"{part_one.rstrip()}\n\n{part_two.lstrip()}"
+    story_body = _strip_generated_headers(f"{part_one.rstrip()}\n\n{part_two.lstrip()}")
 
     book_path = _unique_library_text_path(final_record["title"])
     book_text = (
@@ -531,8 +563,7 @@ def classify_book(query: str, book_name: str = None) -> str:
     )
 
     try:
-        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
-        response = llm(prompt)
+        response = _call_llm(prompt, temperature=0)
         if book_name:
             try:
                 parsed = json.loads(str(response))
@@ -625,9 +656,7 @@ def summarize(query_or_text: str, book_name: str = None) -> str:
 
     # Try to call the LLM; if it fails, return the context and a suggested prompt
     try:
-        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
-        # ChatOpenAI usually supports calling with a single string prompt
-        summary = llm(prompt)
+        summary = _call_llm(prompt, temperature=0)
         return summary
     except Exception as e:
         fallback = (
@@ -662,8 +691,7 @@ def moral_creator(query: str, book_name: str = None) -> str:
     )
 
     try:
-        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0.2, api_key=os.getenv("OPENAI_API_KEY"))
-        moral = llm(prompt)
+        moral = _call_llm(prompt, temperature=0.2)
         return moral
     except Exception:
         # Heuristic fallback: pick sentences with keywords or return first sentence of combined content
