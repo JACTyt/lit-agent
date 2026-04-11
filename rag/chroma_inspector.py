@@ -1,30 +1,24 @@
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
+from rag.constants import DB_PATH, COLLECTION_NAME
 import chromadb
 
-DB_PATH = "rag/chroma_db"
-COLLECTION_NAME = "books_collection"
 
-client = chromadb.PersistentClient(path=DB_PATH)
+if __name__ == "__main__":
+    from agent.llm_provider import get_embeddings  # noqa: F401 — ensures provider env is loaded
 
-# List all collections
-print("Collections:", client.list_collections())
+    client = chromadb.PersistentClient(path=DB_PATH)
 
-# Access your collection
-collection = client.get_collection(name=COLLECTION_NAME)
-print("Collection name:", collection.name)
+    print("Collections:", client.list_collections())
 
-# Count vectors
-print("Number of documents:", collection.count())
+    collection = client.get_collection(name=COLLECTION_NAME)
+    print("Collection name:", collection.name)
+    print("Number of documents:", collection.count())
 
-# Get first 5 documents properly
-results = collection.get()
+    results = collection.get()
+    documents = results["documents"]
+    metadatas = results["metadatas"]
 
-documents = results['documents']      # list of document strings
-metadatas = results['metadatas']      # list of metadata dicts
-
-for i in range(len(documents)):
-    print(f"Doc {i}:")
-    print("Book:", metadatas[i]["book_name"])
-    print("Text:", documents[i][:200])  # first 200 chars
-    print("-----")
+    for i in range(len(documents)):
+        print(f"Doc {i}:")
+        print("Book:", metadatas[i]["book_name"])
+        print("Text:", documents[i][:200])
+        print("-----")

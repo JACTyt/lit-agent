@@ -1,8 +1,7 @@
 from langchain_chroma import Chroma
 from agent.llm_provider import get_embeddings
 from rag.ingest import ensure_books_ingested
-
-DB_PATH = "rag/chroma_db"
+from rag.constants import DB_PATH, COLLECTION_NAME
 
 
 def get_retriever(book_name=None):
@@ -16,6 +15,7 @@ def get_retriever(book_name=None):
     vectorstore = Chroma(
         persist_directory=DB_PATH,
         embedding_function=embeddings,
+        collection_name=COLLECTION_NAME,
     )
 
     if book_name:

@@ -17,13 +17,24 @@ import sys
 import argparse
 
 
-def extract_answer(agent_output: str) -> str:
+def _clip(text: str, max_chars: int | None) -> str:
+    if max_chars is None:
+        return text
+    return text[:max_chars]
+
+
+def extract_answer(agent_output: str, concise: bool = True, max_chars: int | None = 1000) -> str:
     """Return a concise answer parsed from a long agent response string.
 
     Heuristics used (in order):
     - If the agent appends a known signature (e.g., "Nya!"), return everything before it.
     - If there are 'Answer:' or 'Final Answer:' markers, return the following paragraph.
     - Otherwise, return the first non-empty paragraph trimmed to 1000 chars.
+
+    Args:
+        agent_output: Raw collected stream output from the agent.
+        concise: If True, prefer short output heuristics. If False, preserve full answer.
+        max_chars: Maximum output length; use None for no clipping.
     """
     if not agent_output:
         return ""
@@ -75,13 +86,13 @@ def extract_answer(agent_output: str) -> str:
     # Prefer last AIMessage content, then ToolMessage, then any content
     ai_messages = [v for (k, v) in parsed_pairs if k.startswith("AIMessage") and v and v.strip()]
     if ai_messages:
-        return ai_messages[-1].strip()[:1000]
+        return _clip(ai_messages[-1].strip(), max_chars)
     tool_messages = [v for (k, v) in parsed_pairs if k.startswith("ToolMessage") and v and v.strip()]
     if tool_messages:
-        return tool_messages[-1].strip()[:1000]
+        return _clip(tool_messages[-1].strip(), max_chars)
     generic = [v for (k, v) in parsed_pairs if v and v.strip()]
     if generic:
-        return generic[-1].strip()[:1000]
+        return _clip(generic[-1].strip(), max_chars)
 
     # 1) Signature marker
     sigs = ["Nya!", "Nya", "-- End --"]
@@ -96,17 +107,20 @@ def extract_answer(agent_output: str) -> str:
     m = re.search(r"(?:Final Answer:|Answer:|Conclusion:|Summary:)\s*(.+)$", text, flags=re.IGNORECASE | re.DOTALL)
     if m:
         ans = m.group(1).strip()
-        # take up to first blank-line or 1000 chars
-        ans = ans.split("\n\n")[0].strip()
-        return ans[:1000]
+        if concise:
+            # For concise mode, keep only the first paragraph.
+            ans = ans.split("\n\n")[0].strip()
+        return _clip(ans, max_chars)
 
     # 3) Paragraph heuristic
     paras = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
     if paras:
-        return paras[0][:1000]
+        if concise:
+            return _clip(paras[0], max_chars)
+        return _clip("\n\n".join(paras), max_chars)
 
     # 4) Fallback: return shortened text
-    return text[:1000]
+    return _clip(text, max_chars)
 
 
 def _main():

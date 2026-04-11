@@ -1,20 +1,29 @@
 from langchain.tools import tool
-from rag.retriever import get_retriever
 from langchain_chroma import Chroma
-from agent.llm_provider import get_chat_llm, get_embeddings
-from rag.ingest import ensure_books_ingested
 from dotenv import load_dotenv
 import json
 import os
 import re
 from pathlib import Path
 
+from agent.llm_provider import get_chat_llm, get_embeddings
+from rag.constants import DB_PATH, COLLECTION_NAME
+from rag.ingest import ensure_books_ingested
+from rag.retriever import get_retriever
+
 load_dotenv()
-DB_PATH = "rag/chroma_db"
 LIBRARY_DIR = Path("library")
 
-# Create embeddings function
+# Create embeddings function (shared singleton — see llm_provider.get_embeddings)
 embeddings = get_embeddings()
+
+_llm_cache: dict = {}
+
+
+def _get_cached_llm(temperature: float):
+    if temperature not in _llm_cache:
+        _llm_cache[temperature] = get_chat_llm(temperature=temperature)
+    return _llm_cache[temperature]
 
 
 def _library_root() -> Path:
@@ -155,7 +164,7 @@ def _extract_json_object(text: str) -> dict:
 
 
 def _call_llm(prompt: str, temperature: float = 0.7) -> str:
-    llm = get_chat_llm(temperature=temperature)
+    llm = _get_cached_llm(temperature)
     return _model_response_to_text(llm(prompt))
 
 
@@ -192,6 +201,146 @@ def _strip_generated_headers(text: str) -> str:
     return "\n".join(filtered).strip()
 
 
+def _story_word_count(text: str) -> int:
+    return len(re.findall(r"\b\w+\b", text or ""))
+
+
+def _is_low_quality_story(text: str) -> bool:
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return True
+
+    generic_markers = (
+        "began with its main characters facing an unexpected challenge",
+        "as the story reached its turning point",
+        "navigated through setbacks",
+    )
+
+    if any(marker in lowered for marker in generic_markers):
+        return True
+
+    # Enforce a minimum narrative depth for a "book" creation request.
+    return _story_word_count(lowered) < 450
+
+
+def _extract_character_triplet(outline: dict, title: str) -> tuple[str, str, str]:
+    protagonist = "Mira"
+    helper = "Pip"
+    rival = "Brindle"
+
+    raw = outline.get("characters") if isinstance(outline, dict) else None
+    names = []
+
+    if isinstance(raw, dict):
+        for key in ("protagonist", "main", "hero", "helper", "friend", "mentor", "rival", "antagonist"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                names.append(value.strip())
+            elif isinstance(value, dict):
+                nested = value.get("name")
+                if isinstance(nested, str) and nested.strip():
+                    names.append(nested.strip())
+    elif isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                names.append(item.strip())
+            elif isinstance(item, dict):
+                nested = item.get("name")
+                if isinstance(nested, str) and nested.strip():
+                    names.append(nested.strip())
+
+    if names:
+        protagonist = names[0]
+    if len(names) > 1:
+        helper = names[1]
+    if len(names) > 2:
+        rival = names[2]
+
+    if protagonist.lower() == helper.lower():
+        helper = f"{protagonist}'s Friend"
+    if rival.lower() in {protagonist.lower(), helper.lower()}:
+        rival = f"The Shadow of {title.split()[0]}"
+
+    return protagonist, helper, rival
+
+
+def _build_structured_fallback_story(final_record: dict, outline: dict, request: str) -> str:
+    title = final_record.get("title", "Untitled Story")
+    theme = final_record.get("theme", "growth and courage")
+    moral = final_record.get("moral", "Small choices build a better future.")
+    audience = (final_record.get("audience") or "general").lower()
+
+    setting = "the river town of Lantern Vale"
+    conflict = "a mystery that threatens the town's yearly festival"
+    resolution = "truth, teamwork, and patience restore balance"
+
+    if isinstance(outline, dict):
+        if isinstance(outline.get("setting"), str) and outline.get("setting").strip():
+            setting = outline.get("setting").strip()
+        if isinstance(outline.get("conflict"), str) and outline.get("conflict").strip():
+            conflict = outline.get("conflict").strip()
+        if isinstance(outline.get("resolution"), str) and outline.get("resolution").strip():
+            resolution = outline.get("resolution").strip()
+
+    protagonist, helper, rival = _extract_character_triplet(outline or {}, title)
+    tone_line = "The language stayed warm and clear so young readers could follow each turn."
+    if "children" not in audience:
+        tone_line = "The language balanced vivid imagery with reflective moments."
+
+    paragraphs = [
+        (
+            f"On the edge of {setting}, {protagonist} carried a satchel full of stubby pencils and folded paper. "
+            f"While other children hurried past the old market square, {protagonist} stopped to sketch faces, rooftops, and stray cats curled in sunlight. "
+            f"Everyone knew {protagonist} could notice beauty in ordinary things, but almost no one knew how deeply {protagonist} feared making mistakes in front of others. "
+            f"That fear mattered now, because the whole town was preparing for a celebration and trouble had already begun to spread."
+        ),
+        (
+            f"The first sign of danger arrived at dawn: bright festival banners had been painted overnight, then somehow faded before breakfast into pale ghosts of color. "
+            f"Vendors blamed the weather, neighbors blamed one another, and the mayor announced that if the fading continued, the celebration would be canceled. "
+            f"When {helper} found {protagonist} staring at a blank page near the fountain, {helper} whispered that this might be more than bad paint. "
+            f"It might be connected to {conflict}, and only someone patient enough to observe every detail could solve it."
+        ),
+        (
+            f"By afternoon, {protagonist} and {helper} followed faint trails of color dust through alleys, under bridges, and behind the old clocktower. "
+            f"There they discovered footprints and a locked wooden chest etched with symbols that matched patterns in {protagonist}'s sketchbook. "
+            f"Before they could inspect it further, {rival} stepped from the shadows, certain that {protagonist} had no right to meddle in serious matters. "
+            f"The accusation stung, and for a moment {protagonist} almost stepped back into silence."
+        ),
+        (
+            f"Instead of arguing, {protagonist} opened the sketchbook and showed a sequence of drawings made over several days: faded murals, spilled pigments, and the same symbol near each site. "
+            f"The drawings revealed a pattern no one else had seen. "
+            f"Even {rival} paused, surprised that careful observation could uncover what loud guesses had missed. "
+            f"Together they carried the chest to the library, where an elderly archivist explained that the symbols marked old recipes for unstable dyes, beautiful at first but doomed to vanish unless mixed with patience and precision."
+        ),
+        (
+            f"Now the challenge changed from mystery to action. "
+            f"The town had one evening left to repaint every banner and sign, and panic made everyone clumsy. "
+            f"{protagonist} organized teams: one to grind pigments, one to prepare cloth, one to test each mixture under lamplight, and one to repaint in gentle layers. "
+            f"{helper} kept spirits high with songs, while {rival} climbed ladders and took the hardest corners no one else could reach."
+        ),
+        (
+            f"As the moon rose, mistakes still happened. Lines wobbled, colors bled, and tired hands trembled. "
+            f"Each time, {protagonist} resisted the urge to hide. "
+            f"Instead, {protagonist} showed how to pause, breathe, and try again with steadier hands. "
+            f"That quiet courage changed the mood of the square: fear became focus, and focus became shared pride."
+        ),
+        (
+            f"At sunrise, the banners gleamed brighter than before. The celebration went ahead, and the crowd cheered not only for the colors but for the teamwork behind them. "
+            f"When the mayor thanked everyone, {protagonist} finally spoke in public, crediting {helper}, {rival}, and every volunteer who stayed up through the night. "
+            f"The final mural in the square captured the lesson in a single image: many different hands painting one horizon together. "
+            f"{resolution.capitalize()}, and the town remembered that {moral.rstrip('.')}.")
+        ,
+        (
+            f"Long after the festival, children visited the square to copy the mural into their own notebooks. "
+            f"{protagonist} greeted each of them with spare pencils and a reminder that strong stories and strong communities begin the same way: with attention, honesty, and willingness to learn. "
+            f"Whenever someone said, 'I am not talented enough,' {protagonist} smiled and pointed to the oldest, most imperfect sketch pinned above the desk. "
+            f"{tone_line}"
+        ),
+    ]
+
+    return "\n\n".join(p.strip() for p in paragraphs if p.strip())
+
+
 def _get_vector_store() -> Chroma:
     # Keep retrieval index in sync with local books/library before each retrieval action.
     try:
@@ -201,7 +350,8 @@ def _get_vector_store() -> Chroma:
         pass
     return Chroma(
         persist_directory=DB_PATH,
-        embedding_function=embeddings
+        embedding_function=embeddings,
+        collection_name=COLLECTION_NAME,
     )
 
 
@@ -252,37 +402,24 @@ def _extract_taxonomy_from_text(text: str) -> dict:
 
 
 def _find_book_file(book_name: str) -> str | None:
-    """Locate a book text file in the active library locations."""
-    candidates = []
-    normalized = book_name.strip()
-    if not normalized:
+    """Locate a book text file in library/."""
+    try:
+        return str(_resolve_library_text_path(book_name, must_exist=True))
+    except (FileNotFoundError, ValueError):
         return None
-
-    if normalized.lower().endswith(".txt"):
-        candidates.append(normalized)
-    else:
-        candidates.append(f"{normalized}.txt")
-
-    for base_dir in ("library", "books"):
-        for candidate in candidates:
-            path = os.path.join(base_dir, candidate)
-            if os.path.isfile(path):
-                return path
-    return None
 
 
 def _persist_classification_metadata(book_name: str, metadata: dict) -> str | None:
     """Persist book classification metadata as a JSON sidecar next to the book."""
-    source_path = _find_book_file(book_name)
-    if not source_path:
-        return None
-    if not _is_within_library(Path(source_path)):
+    try:
+        book_path = _resolve_library_text_path(book_name, must_exist=True)
+    except (FileNotFoundError, ValueError):
         return None
 
-    sidecar_path = os.path.splitext(source_path)[0] + ".metadata.json"
+    sidecar_path = os.path.splitext(str(book_path))[0] + ".metadata.json"
     payload = {
-        "book_name": os.path.splitext(os.path.basename(source_path))[0],
-        "source_path": source_path,
+        "book_name": book_path.stem,
+        "source_path": str(book_path),
         "classification": metadata,
     }
     with open(sidecar_path, "w", encoding="utf-8") as fh:
@@ -329,15 +466,17 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
     }
 
     part_one_prompt = (
-        "Write Part 1 of an original story in 2 paragraphs using this outline. "
-        "Focus on the setup, the detectives or protagonists, the initial mystery or conflict, and the first major challenge. "
-        "Do not resolve the story yet.\n\n"
+        "Write Part 1 of an original children's story in 4 rich paragraphs and at least 280 words. "
+        "Include character introductions, vivid setting details, clear motivations, and an early conflict. "
+        "Use concrete scenes and dialogue. Do not resolve the central conflict yet.\n\n"
+        f"Story request: {request}\n"
         f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
     )
     part_two_prompt = (
-        "Write Part 2 of the same story in 2 paragraphs. "
-        "Continue directly from Part 1, escalate the conflict, solve the mystery, and land the moral naturally through the ending. "
-        "Do not repeat Part 1.\n\n"
+        "Write Part 2 of the same story in 4 rich paragraphs and at least 280 words. "
+        "Continue seamlessly from Part 1, raise stakes, deliver an emotional turning point, and resolve the conflict with a satisfying ending. "
+        "Integrate the moral naturally through character choices, not as a lecture.\n\n"
+        f"Story request: {request}\n"
         f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
     )
 
@@ -355,18 +494,31 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
     part_two = _strip_generated_headers(part_two)
 
     if not part_one:
-        part_one = (
-            f"{final_record['title']} opened with two detectives working a case that looked simple at first. "
-            f"They followed clues through a city of locked doors, false leads, and strained trust."
-        )
+        part_one = _build_structured_fallback_story(final_record, outline, request)
 
     if not part_two:
-        part_two = (
-            f"As the pressure grew, the detectives had to trust each other's instincts to uncover the truth. "
-            f"By combining their skills and staying honest with one another, they uncovered the murderer and learned that {final_record['moral'].lower()}"
-        )
+        part_two = ""
 
     story_body = _strip_generated_headers(f"{part_one.rstrip()}\n\n{part_two.lstrip()}")
+
+    if _is_low_quality_story(story_body):
+        single_pass_prompt = (
+            "Write a complete, captivating children's story between 700 and 1100 words. "
+            "The story must include: a memorable protagonist, at least two supporting characters, a specific setting, a concrete conflict, rising action, a turning point, and a heartfelt resolution. "
+            "Use descriptive language, short dialogue snippets, and emotionally meaningful choices. "
+            "Do not output headers, bullets, or JSON; output only narrative prose.\n\n"
+            f"Story request: {request}\n"
+            f"Story profile: {json.dumps(outline or final_record, ensure_ascii=False)}"
+        )
+        try:
+            enhanced = _strip_generated_headers(_call_llm(single_pass_prompt, temperature=0.85).strip())
+        except Exception:
+            enhanced = ""
+
+        if not _is_low_quality_story(enhanced):
+            story_body = enhanced
+        else:
+            story_body = _build_structured_fallback_story(final_record, outline, request)
 
     book_path = _unique_library_text_path(final_record["title"])
     book_text = (
@@ -535,10 +687,7 @@ def classify_book(query: str, book_name: str = None) -> str:
     """
     if book_name:
         retriever = get_retriever(book_name)
-        try:
-            docs = retriever.get_relevant_documents(query)
-        except Exception:
-            docs = retriever._get_relevant_documents(query, run_manager=None)
+        docs = retriever.invoke(query)
     else:
         vector_store = _get_vector_store()
         docs = vector_store.similarity_search(query, k=4)
@@ -565,13 +714,9 @@ def classify_book(query: str, book_name: str = None) -> str:
     try:
         response = _call_llm(prompt, temperature=0)
         if book_name:
-            try:
-                parsed = json.loads(str(response))
-                if isinstance(parsed, dict):
-                    record = {**fallback_record, **parsed}
-                    _persist_classification_metadata(book_name, record)
-            except Exception:
-                _persist_classification_metadata(book_name, fallback_record)
+            parsed = _extract_json_object(response)
+            record = {**fallback_record, **parsed} if parsed else fallback_record
+            _persist_classification_metadata(book_name, record)
         return response
     except Exception:
         structured = fallback_record
@@ -581,27 +726,8 @@ def classify_book(query: str, book_name: str = None) -> str:
             except Exception:
                 pass
         return json.dumps(structured, ensure_ascii=False, indent=2)
-"""
-@tool("MultiBookSearch", description="Searches all ingested books")
-def search_books(query: str, book_name: str = None) -> str:
-    retriever = get_retriever(book_name)
-    
-    # required in new LangChain
-    docs = retriever._get_relevant_documents(query, run_manager=None)
-    
-    print("Retrieved docs:", len(docs))
-    
-    if not docs:
-        return "No relevant documents found."
 
-    results = []
-    for i, doc in enumerate(docs, start=1):
-        source = doc.metadata.get("book_name", "Unknown Source")
-        results.append(f"Result {i} — Book: {source}\n{doc.page_content}")
-    return "\n\n".join(results)
-"""
 
-    
 @tool("GetContext", response_format="content_and_artifact", description="Retrieve grounded passages from the library to support librarian tasks such as classification, summary, and moral extraction.")
 def retrieve_context(query: str):
     """Retrieve information to help answer a query.
@@ -633,10 +759,7 @@ def summarize(query_or_text: str, book_name: str = None) -> str:
 
     if book_name:
         retriever = get_retriever(book_name)
-        try:
-            docs = retriever.get_relevant_documents(query_or_text)  # preferred API
-        except Exception:
-            docs = retriever._get_relevant_documents(query_or_text, run_manager=None)
+        docs = retriever.invoke(query_or_text)
     else:
         if is_long_text:
             # Treat as raw text to summarize
@@ -675,10 +798,7 @@ def moral_creator(query: str, book_name: str = None) -> str:
     # Retrieve context
     if book_name:
         retriever = get_retriever(book_name)
-        try:
-            docs = retriever.get_relevant_documents(query)
-        except Exception:
-            docs = retriever._get_relevant_documents(query, run_manager=None)
+        docs = retriever.invoke(query)
     else:
         vector_store = _get_vector_store()
         docs = vector_store.similarity_search(query, k=4)

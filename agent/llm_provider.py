@@ -49,8 +49,13 @@ def get_chat_llm(temperature: float = 0.0):
     return ChatOllama(model=model_name, temperature=temperature, base_url=base_url)
 
 
+_embeddings_cache: dict = {}
+
+
 def get_embeddings():
     provider = get_llm_provider()
+    if provider in _embeddings_cache:
+        return _embeddings_cache[provider]
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -61,16 +66,18 @@ def get_embeddings():
         from langchain_openai import OpenAIEmbeddings
 
         model_name = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
-        return OpenAIEmbeddings(model=model_name, api_key=api_key)
+        instance = OpenAIEmbeddings(model=model_name, api_key=api_key)
+    else:
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+        embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        try:
+            ollama_module = importlib.import_module("langchain_ollama")
+            OllamaEmbeddings = getattr(ollama_module, "OllamaEmbeddings")
+        except Exception as exc:
+            raise ImportError(
+                "Ollama embeddings require langchain-ollama. Install it with: pip install langchain-ollama"
+            ) from exc
+        instance = OllamaEmbeddings(model=embed_model, base_url=base_url)
 
-    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
-    embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-    try:
-        ollama_module = importlib.import_module("langchain_ollama")
-        OllamaEmbeddings = getattr(ollama_module, "OllamaEmbeddings")
-    except Exception as exc:
-        raise ImportError(
-            "Ollama embeddings require langchain-ollama. Install it with: pip install langchain-ollama"
-        ) from exc
-
-    return OllamaEmbeddings(model=embed_model, base_url=base_url)
+    _embeddings_cache[provider] = instance
+    return instance

@@ -7,12 +7,11 @@ from agent.llm_provider import get_embeddings
 from langchain_chroma import Chroma
 import chromadb
 from dotenv import load_dotenv
+from rag.constants import DB_PATH, COLLECTION_NAME
 
 load_dotenv()  # load OPENAI_API_KEY from .env if needed
 
 BOOKS_DIR = "books/"
-DB_PATH = "rag/chroma_db"
-COLLECTION_NAME = "books_collection"
 STATE_FILENAME = "ingestion_state.json"
 
 
@@ -115,7 +114,7 @@ def ensure_books_ingested(books_dir: str | None = None, db_path: str = DB_PATH, 
     }
 
 
-def ingest_books(books_dir: str = BOOKS_DIR, db_path: str = DB_PATH, collection_name: str = COLLECTION_NAME, verbose: bool = True) -> tuple[Chroma, int]:
+def ingest_books(books_dir: str | None = None, db_path: str = DB_PATH, collection_name: str = COLLECTION_NAME, verbose: bool = True) -> tuple[Chroma, int]:
     """
     Ingest all books from a directory into ChromaDB.
     
@@ -158,7 +157,7 @@ def ingest_books(books_dir: str = BOOKS_DIR, db_path: str = DB_PATH, collection_
                 
                 # Add book metadata
                 for chunk in chunks:
-                    chunk.metadata["book_name"] = book_name_clean
+                    chunk.metadata["book_name"] = book_name_clean.lower()
                     chunk.metadata["source"] = path
                 
                 all_docs.extend(chunks)
