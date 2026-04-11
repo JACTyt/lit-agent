@@ -3,3 +3,5 @@ __pycache__
 .env
 TASKS.md
 PROJECT_STRUCTURE_REPORT.md
+chroma_db
+rag/chroma_db

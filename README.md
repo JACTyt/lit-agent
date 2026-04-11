@@ -108,8 +108,19 @@ Repository layout
 - `rag/` — ingestion, retriever, and Chroma DB utilities
 - `library/` — active plain-text books source directory
 - `books/` — optional legacy/fallback books directory
+- `domain_knowledge/` — librarian rules, taxonomy, and examples loaded into the agent prompt
 - `rag/chroma_db/` — local Chroma/SQLite database files
 - `main.py` — example runner
+
+Domain knowledge
+-----------------
+
+The agent now loads compact librarian reference notes from `domain_knowledge/` at startup. These notes provide stable guidance for:
+- classification,
+- library organization,
+- and moral/lesson extraction.
+
+If you update the files in `domain_knowledge/`, restart the agent so the revised knowledge is included in the system prompt.
 
 Configuration
 - Set any required LLM provider API keys as environment variables (for example `OPENAI_API_KEY`).
