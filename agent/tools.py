@@ -118,6 +118,51 @@ def _model_response_to_text(response) -> str:
     return getattr(response, "content", None) or str(response)
 
 
+def _extract_json_object(text: str) -> dict:
+    """Best-effort JSON extraction from model output.
+
+    Accepts either a raw JSON string or a response that embeds a JSON object
+    inside extra text / code fences.
+    """
+    if not text:
+        return {}
+
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fenced_match:
+        try:
+            parsed = json.loads(fenced_match.group(1))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+
+    object_match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    if object_match:
+        candidate = object_match.group(0)
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    return {}
+
+
+def _call_llm(prompt: str, temperature: float = 0.7) -> str:
+    llm = ChatOpenAI(
+        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        temperature=temperature,
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+    return _model_response_to_text(llm(prompt))
+
+
 def _get_vector_store() -> Chroma:
     # Keep retrieval index in sync with local books/library before each retrieval action.
     try:
@@ -223,10 +268,10 @@ def _persist_classification_metadata(book_name: str, metadata: dict) -> str | No
 )
 def create_book(request: str, title: str = None, genre: str = None, theme: str = None, audience: str = None, reading_level: str = None, moral: str = None) -> str:
     """Create a new original book and persist it inside library/ only."""
-    prompt = (
-        "Write an original short story for a virtual librarian collection. Return valid JSON only with keys: title, genre, theme, audience, reading_level, moral, story. "
-        "The story should be original, coherent, and suitable for the requested audience. "
-        "Keep the tone stable and the lesson clear. "
+    outline_prompt = (
+        "Create a compact story outline in valid JSON only with keys: title, genre, theme, audience, reading_level, moral, characters, conflict, resolution, setting. "
+        "The outline should be specific enough to support a complete original story in multiple parts. "
+        "Do not write the full story yet.\n"
         f"Requested story idea: {request}\n"
         f"Requested title: {title or 'auto'}\n"
         f"Requested genre: {genre or 'auto'}\n"
@@ -236,41 +281,60 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
         f"Requested moral: {moral or 'auto'}\n"
     )
 
-    generated = None
     try:
-        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"))
-        generated = llm(prompt)
+        outline_text = _call_llm(outline_prompt, temperature=0.4)
     except Exception:
-        generated = None
+        outline_text = ""
 
-    payload = {}
-    raw_text = _model_response_to_text(generated) if generated is not None else ""
-    try:
-        parsed = json.loads(raw_text)
-        if isinstance(parsed, dict):
-            payload = parsed
-    except Exception:
-        payload = {}
-
-    title_value = (payload.get("title") or title or "").strip() or _sanitize_book_stem(request[:60] or "Untitled Book").replace("_", " ").title()
-    story_value = (payload.get("story") or raw_text or "").strip()
-    fallback = _extract_taxonomy_from_text(f"{request}\n{story_value}")
+    outline = _extract_json_object(outline_text)
+    title_value = (outline.get("title") or title or "").strip() or _sanitize_book_stem(request[:60] or "Untitled Book").replace("_", " ").title()
+    fallback = _extract_taxonomy_from_text(f"{request}\n{outline_text}")
 
     final_record = {
         "title": title_value,
-        "genre": payload.get("genre") or genre or fallback["genre"],
-        "theme": payload.get("theme") or theme or fallback["theme"],
-        "audience": payload.get("audience") or audience or fallback["audience"],
-        "reading_level": payload.get("reading_level") or reading_level or fallback["reading_level"],
-        "moral": payload.get("moral") or moral or fallback["lesson_hint"],
+        "genre": outline.get("genre") or genre or fallback["genre"],
+        "theme": outline.get("theme") or theme or fallback["theme"],
+        "audience": outline.get("audience") or audience or fallback["audience"],
+        "reading_level": outline.get("reading_level") or reading_level or fallback["reading_level"],
+        "moral": outline.get("moral") or moral or fallback["lesson_hint"],
     }
 
-    story_body = story_value
-    if not story_body:
-        story_body = (
-            f"{final_record['title']} is a short story about {final_record['theme']}. "
-            f"It is written for {final_record['audience']} readers and emphasizes {final_record['moral'].lower()}"
+    part_one_prompt = (
+        "Write Part 1 of an original story in 2 paragraphs using this outline. "
+        "Focus on the setup, the detectives or protagonists, the initial mystery or conflict, and the first major challenge. "
+        "Do not resolve the story yet.\n\n"
+        f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
+    )
+    part_two_prompt = (
+        "Write Part 2 of the same story in 2 paragraphs. "
+        "Continue directly from Part 1, escalate the conflict, solve the mystery, and land the moral naturally through the ending. "
+        "Do not repeat Part 1.\n\n"
+        f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
+    )
+
+    try:
+        part_one = _call_llm(part_one_prompt, temperature=0.8).strip()
+    except Exception:
+        part_one = ""
+
+    try:
+        part_two = _call_llm(part_two_prompt, temperature=0.8).strip()
+    except Exception:
+        part_two = ""
+
+    if not part_one:
+        part_one = (
+            f"{final_record['title']} opened with two detectives working a case that looked simple at first. "
+            f"They followed clues through a city of locked doors, false leads, and strained trust."
         )
+
+    if not part_two:
+        part_two = (
+            f"As the pressure grew, the detectives had to trust each other's instincts to uncover the truth. "
+            f"By combining their skills and staying honest with one another, they uncovered the murderer and learned that {final_record['moral'].lower()}"
+        )
+
+    story_body = f"{part_one.rstrip()}\n\n{part_two.lstrip()}"
 
     book_path = _unique_library_text_path(final_record["title"])
     book_text = (
@@ -304,6 +368,7 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
             "path": str(book_path),
             "metadata_path": str(sidecar_path),
             "classification": final_record,
+            "story": story_body,
         },
         ensure_ascii=False,
         indent=2,
