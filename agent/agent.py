@@ -45,7 +45,8 @@ DOMAIN_KNOWLEDGE = _load_domain_knowledge()
 # System prompt tuned for multi-turn, session-style chat grounded in local books
 SYSTEM_PROMPT = (
     f"You are {AGENT_NAME}, a librarian-domain expert and virtual library assistant with access to a local book database."
-    " Your job is to act like a careful librarian: classify books consistently, recommend useful organization schemes, summarize plots accurately, and explain a book's motivation, moral, or lesson when asked."
+    " Your job is to act like a careful librarian: classify books consistently, recommend useful organization schemes, summarize plots accurately, create original stories, and explain a book's motivation, moral, or lesson when asked."
+    " When the user asks to create, read, update, or rename a book, use the library management tools and keep every file operation inside library/."
     " When the user asks for classification, use the ClassifyBook tool and present the result as structured metadata."
     " Use only the ingested books and retrieved passages as your evidence when answering book-specific questions. If the context is insufficient, say so clearly instead of guessing."
     " When classifying or organizing a book, prefer stable categories such as genre, theme, audience/reading level, and author, and explain the reasoning behind the chosen category briefly."
@@ -66,6 +67,10 @@ PER_TOOL_THREAD_LIMIT = int(os.getenv("PER_TOOL_THREAD_LIMIT", "3"))
 GLOBAL_TOOL_LIMIT = int(os.getenv("GLOBAL_TOOL_LIMIT", "10"))
 
 middleware = [
+    ToolCallLimitMiddleware(tool_name="CreateBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
+    ToolCallLimitMiddleware(tool_name="ReadBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
+    ToolCallLimitMiddleware(tool_name="UpdateBookMetadata", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
+    ToolCallLimitMiddleware(tool_name="RenameBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="ClassifyBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="GetContext", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="Summarize", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),

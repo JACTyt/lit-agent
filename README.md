@@ -1,137 +1,131 @@
 # Lit-Agent
 
-Lit-Agent is a small toolkit and example agent for building retrieval-augmented workflows over plain-text books. The project provides utilities to ingest books, create a local vector store, and run an agent that uses retrieval + LLM prompts to answer questions, summarize, and extract facts grounded in the source text.
+Lit-Agent is a small toolkit and example agent for working with a local book library. It now behaves more like a virtual librarian: it can classify books, summarize them, extract morals, create new stories, and manage files in `library/` safely.
 
-Key features
+## Key features
 - Book ingestion: split and preprocess plain-text books into chunks for embedding.
-- Vector store: local Chroma/SQLite-backed embedding database for fast similarity search.
-- Agent tools: scripts and helper functions to query, summarize, and extract structured data.
-- RAG workflows: combine retrieved passages with LLM prompts to produce grounded answers.
+- Vector store: local Chroma/SQLite-backed embedding database for similarity search.
 - Automatic ingestion sync: retrieval checks whether `library/` or `books/` changed and re-ingests when needed.
+- Librarian tools: classify books, read books, create books, update metadata, and rename books inside `library/`.
+- Domain knowledge: compact librarian reference notes are loaded from `domain_knowledge/` at startup.
+- RAG workflows: combine retrieved passages with LLM prompts to produce grounded answers, summaries, and morals.
 
-Quick start
+## Repository layout
+- `agent/` - agent logic and helper tools
+- `rag/` - ingestion, retriever, and Chroma DB utilities
+- `library/` - active plain-text books source directory
+- `books/` - optional legacy/fallback books directory
+- `domain_knowledge/` - librarian rules, taxonomy, examples, and metadata guidance
+- `rag/chroma_db/` - local Chroma/SQLite database files
+- `sessions/` - saved chat sessions and logs
+- `main.py` - example runner
+
+## Quick start
 
 1. Create a virtual environment and activate it:
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 ```
-2. Install dependencies (if `requirements.txt` exists):
+2. Install dependencies:
 ```powershell
 pip install -r requirements.txt
 ```
-3. Run the example entrypoint:
+3. Run the app:
 ```powershell
 python main.py
 ```
 
-Interactive Console UI
-----------------------
+## Console UI
 
-The project now provides a simple session-style console UI (launched by `python main.py`). The UI supports multi-turn chats, automatic session autosave, per-session log files, and a few convenience commands.
+The app provides a session-style console UI launched by `python main.py`.
 
-- Start the UI:
+Available commands inside the UI:
+- `/help` - show help and command descriptions
+- `/exit` or `/quit` - exit the session
+- `/history` - show in-memory session history
+- `/save` - save the current session to `sessions/`
+- `/extract` - run the concise-answer extractor over raw session output
+- `/restore <session-id-or-name>` - restore a previously saved session
+- `/reimport` - re-ingest books from `library/` (fallback: `books/`) into ChromaDB
 
+## Library management tools
+
+The agent now exposes explicit book-management tools through its prompt layer:
+- `ClassifyBook` - classify a book with genre, theme, audience, reading level, and rationale
+- `CreateBook` - create an original book and save it in `library/`
+- `ReadBook` - read a book from `library/` safely
+- `UpdateBookMetadata` - update a book's metadata sidecar in `library/`
+- `RenameBook` - rename a book safely inside `library/`
+- `GetContext` - retrieve grounded passages for classification or analysis
+- `Summarize` - summarize book passages in librarian style
+- `MoralCreator` - extract or infer the moral or lesson
+
+### Safety rules
+- File operations are restricted to `library/`.
+- Path traversal and absolute path escapes are rejected.
+- Metadata is stored next to each book as a `.metadata.json` sidecar.
+
+## Domain knowledge
+
+The agent loads compact librarian reference notes from `domain_knowledge/` at startup. These notes provide stable guidance for:
+- classification,
+- library organization,
+- narrative pattern recognition,
+- metadata structure,
+- and moral/lesson extraction.
+
+If you update files in `domain_knowledge/`, restart the agent so the revised knowledge is included in the system prompt.
+
+## Automatic ingestion behavior
+
+- Source directory priority:
+  1. `library/` if present
+  2. `books/`
+- Before retrieval, the app compares the current `.txt` files against `rag/chroma_db/ingestion_state.json`.
+- If files were added, updated, or removed, the vector DB is rebuilt automatically.
+
+### Verify auto ingestion
+1. Add a new `.txt` file to `library/`.
+2. Start the app with `python main.py`.
+3. Ask a question that should match the new file.
+4. Confirm the answer includes retrieved context from that file.
+
+You can also run:
 ```powershell
-python main.py
+python rag/ingest.py
 ```
+to re-sync the index manually.
 
-- When a session starts you will see a session id printed (for example `20260308T113317-16957d`). The session autosaves to `sessions/session_<id>.json` and a live log is written to `sessions/session_<id>.log`.
-- Commands (type them at the prompt):
-	- `/help` : show help and command descriptions
-	- `/exit` or `/quit` : exit the session
-	- `/history` : display the in-memory session history (user inputs + concise AI replies)
-	- `/save` : save the current session to `sessions/<safe_name>.json` and copy the live log to `sessions/<safe_name>.log`
-	- `/extract` : run the concise-answer extractor over the session raw outputs and show the extracted summary
-	- `/restore <session-id-or-name>` : restore a previously saved session by id or filename fragment (loads its history into the current session)
+## Examples
 
-Autosave and Logs
------------------
-
-- An autosave JSON is created at session start and updated after every user action: `sessions/session_<id>.json`.
-- A live per-session log file is created at session start: `sessions/session_<id>.log`.
-- When you use `/save` and provide a name, the autosave JSON and the live log are copied to `sessions/<safe_name>.json` and `sessions/<safe_name>.log`.
-
-Agent configuration
--------------------
-
-- Set provider/keys as environment variables (for example `OPENAI_API_KEY`).
-- Optional environment overrides:
-	- `AGENT_NAME` to change the displayed agent name (default `LitBot`).
-	- `LLM_MODEL` to choose a different model string used by the agent (default `gpt-4o-mini`).
-
-Examples
---------
-
-- Start and ask a question:
-
-```powershell
-python main.py
+### Ask for a summary
+```text
 You: Summarize the moral of The Proud Rose
 ```
 
-- Save the session after a few turns:
-
+### Create a new book
+Ask the agent to create a story and save it in the library:
 ```text
-/save
-Session name (optional): proud_rose_notes
+Create a short fable about patience and save it in library/
 ```
 
-The session JSON and named log will be available in the `sessions/` folder.
+### Classify a book
+```text
+Classify The Ant and the Grasshopper
+```
 
-Typical workflow
-- Ingest/sync books: `python rag/ingest.py`
-- Inspect DB: `python rag/chroma_inspector.py`
-- Query agent: `python main.py --query "Summarize the moral of The Ant and the Grasshopper"`
+## Configuration
+- Set any required LLM provider API keys as environment variables, for example `OPENAI_API_KEY`.
+- Optional environment overrides:
+  - `AGENT_NAME` to change the displayed agent name.
+  - `LLM_MODEL` to choose a different model string used by the agent.
+- The local Chroma DB path defaults to `rag/chroma_db/`.
 
-Automatic ingestion behavior
----------------------------
-
-- Source directory priority:
-	1. `library/` (if present)
-	2. `books/`
-- Before retrieval, the app compares current `.txt` files (name, size, mtime) against `rag/chroma_db/ingestion_state.json`.
-- If files were added/updated/removed, the vector DB is rebuilt automatically.
-
-How to verify auto ingestion
-----------------------------
-
-1. Add a new `.txt` file into `library/` (or `books/` if `library/` does not exist).
-2. Start the app with `python main.py`.
-3. Ask a question that should match content from the new file.
-4. Confirm the answer includes retrieved context from that file.
-
-You can also run `python rag/ingest.py` directly to see whether ingestion runs or reports that the index is already up to date.
-
-Repository layout
-- `agent/` — agent logic and helper tools
-- `rag/` — ingestion, retriever, and Chroma DB utilities
-- `library/` — active plain-text books source directory
-- `books/` — optional legacy/fallback books directory
-- `domain_knowledge/` — librarian rules, taxonomy, and examples loaded into the agent prompt
-- `rag/chroma_db/` — local Chroma/SQLite database files
-- `main.py` — example runner
-
-Domain knowledge
------------------
-
-The agent now loads compact librarian reference notes from `domain_knowledge/` at startup. These notes provide stable guidance for:
-- classification,
-- library organization,
-- and moral/lesson extraction.
-
-If you update the files in `domain_knowledge/`, restart the agent so the revised knowledge is included in the system prompt.
-
-Configuration
-- Set any required LLM provider API keys as environment variables (for example `OPENAI_API_KEY`).
-- The local Chroma DB path defaults to `rag/chroma_db/`; change paths in the configuration or scripts if needed.
-
-Contributing
-- Fork the repo, create a branch, add focused changes and tests, then open a pull request.
-
-Troubleshooting
+## Troubleshooting
 - Ensure book files are UTF-8 encoded if ingestion fails.
 - Improve retrieval quality by adjusting chunk size or the embedding model.
+- Restart the app after editing files in `domain_knowledge/`.
 
-License
+## License
 - See `LICENSE.md` for license details.

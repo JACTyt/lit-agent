@@ -6,12 +6,116 @@ from rag.ingest import ensure_books_ingested
 from dotenv import load_dotenv
 import json
 import os
+import re
+from pathlib import Path
 
 load_dotenv()
 DB_PATH = "rag/chroma_db"
+LIBRARY_DIR = Path("library")
 
 # Create embeddings function
 embeddings = OpenAIEmbeddings()
+
+
+def _library_root() -> Path:
+    LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    return LIBRARY_DIR.resolve()
+
+
+def _sanitize_book_stem(value: str) -> str:
+    cleaned = re.sub(r"[^\w\s.-]", "", value.strip(), flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().replace(" ", "_")
+    cleaned = re.sub(r"_+", "_", cleaned).strip("._")
+    return cleaned or "untitled_book"
+
+
+def _normalize_label(value: str) -> str:
+    return re.sub(r"[\W_]+", "", value, flags=re.UNICODE).lower()
+
+
+def _validate_library_leaf_name(book_name: str) -> str:
+    raw = (book_name or "").strip()
+    if not raw:
+        raise ValueError("Book name cannot be empty.")
+
+    candidate = Path(raw)
+    if candidate.is_absolute() or len(candidate.parts) != 1:
+        raise ValueError("Book operations are restricted to filenames in library/ only.")
+
+    stem = candidate.stem
+    if stem in {"", ".", ".."} or any(part in {".", ".."} for part in candidate.parts):
+        raise ValueError("Book operations are restricted to filenames in library/ only.")
+    return stem
+
+
+def _unique_library_text_path(stem: str) -> Path:
+    root = _library_root()
+    safe_stem = _sanitize_book_stem(stem)
+    candidate = root / f"{safe_stem}.txt"
+    counter = 2
+    while candidate.exists():
+        candidate = root / f"{safe_stem}_{counter}.txt"
+        counter += 1
+    return candidate
+
+
+def _resolve_library_text_path(book_name: str, must_exist: bool = True) -> Path:
+    stem = _validate_library_leaf_name(book_name)
+    root = _library_root()
+    exact_name = Path(book_name).name
+    if exact_name.lower().endswith(".txt"):
+        exact_candidate = root / exact_name
+    else:
+        exact_candidate = root / f"{stem}.txt"
+
+    if exact_candidate.exists():
+        return exact_candidate
+
+    normalized = _normalize_label(stem)
+    matches = [path for path in root.glob("*.txt") if _normalize_label(path.stem) == normalized]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Multiple books match '{book_name}'. Use a more exact filename.")
+
+    safe_candidate = root / f"{_sanitize_book_stem(stem)}.txt"
+    if must_exist:
+        raise FileNotFoundError(f"Book not found in library/: {book_name}")
+    return safe_candidate
+
+
+def _book_sidecar_path(book_path: Path) -> Path:
+    return book_path.with_suffix(".metadata.json")
+
+
+def _is_within_library(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(_library_root())
+        return True
+    except Exception:
+        return False
+
+
+def _load_book_metadata(book_path: Path) -> dict:
+    sidecar_path = _book_sidecar_path(book_path)
+    if not sidecar_path.exists():
+        return {}
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _save_book_metadata(book_path: Path, payload: dict) -> Path:
+    sidecar_path = _book_sidecar_path(book_path)
+    with open(sidecar_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    return sidecar_path
+
+
+def _model_response_to_text(response) -> str:
+    return getattr(response, "content", None) or str(response)
 
 
 def _get_vector_store() -> Chroma:
@@ -98,6 +202,8 @@ def _persist_classification_metadata(book_name: str, metadata: dict) -> str | No
     source_path = _find_book_file(book_name)
     if not source_path:
         return None
+    if not _is_within_library(Path(source_path)):
+        return None
 
     sidecar_path = os.path.splitext(source_path)[0] + ".metadata.json"
     payload = {
@@ -108,6 +214,216 @@ def _persist_classification_metadata(book_name: str, metadata: dict) -> str | No
     with open(sidecar_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     return sidecar_path
+
+
+@tool(
+    "CreateBook",
+    response_format="content",
+    description="Create an original book, save it safely into library/, and return its saved path plus metadata. Use `request` to describe the story to generate."
+)
+def create_book(request: str, title: str = None, genre: str = None, theme: str = None, audience: str = None, reading_level: str = None, moral: str = None) -> str:
+    """Create a new original book and persist it inside library/ only."""
+    prompt = (
+        "Write an original short story for a virtual librarian collection. Return valid JSON only with keys: title, genre, theme, audience, reading_level, moral, story. "
+        "The story should be original, coherent, and suitable for the requested audience. "
+        "Keep the tone stable and the lesson clear. "
+        f"Requested story idea: {request}\n"
+        f"Requested title: {title or 'auto'}\n"
+        f"Requested genre: {genre or 'auto'}\n"
+        f"Requested theme: {theme or 'auto'}\n"
+        f"Requested audience: {audience or 'auto'}\n"
+        f"Requested reading level: {reading_level or 'auto'}\n"
+        f"Requested moral: {moral or 'auto'}\n"
+    )
+
+    generated = None
+    try:
+        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"))
+        generated = llm(prompt)
+    except Exception:
+        generated = None
+
+    payload = {}
+    raw_text = _model_response_to_text(generated) if generated is not None else ""
+    try:
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, dict):
+            payload = parsed
+    except Exception:
+        payload = {}
+
+    title_value = (payload.get("title") or title or "").strip() or _sanitize_book_stem(request[:60] or "Untitled Book").replace("_", " ").title()
+    story_value = (payload.get("story") or raw_text or "").strip()
+    fallback = _extract_taxonomy_from_text(f"{request}\n{story_value}")
+
+    final_record = {
+        "title": title_value,
+        "genre": payload.get("genre") or genre or fallback["genre"],
+        "theme": payload.get("theme") or theme or fallback["theme"],
+        "audience": payload.get("audience") or audience or fallback["audience"],
+        "reading_level": payload.get("reading_level") or reading_level or fallback["reading_level"],
+        "moral": payload.get("moral") or moral or fallback["lesson_hint"],
+    }
+
+    story_body = story_value
+    if not story_body:
+        story_body = (
+            f"{final_record['title']} is a short story about {final_record['theme']}. "
+            f"It is written for {final_record['audience']} readers and emphasizes {final_record['moral'].lower()}"
+        )
+
+    book_path = _unique_library_text_path(final_record["title"])
+    book_text = (
+        f"Title: {final_record['title']}\n"
+        f"Genre: {final_record['genre']}\n"
+        f"Theme: {final_record['theme']}\n"
+        f"Audience: {final_record['audience']}\n"
+        f"Reading level: {final_record['reading_level']}\n"
+        f"Moral: {final_record['moral']}\n\n"
+        f"Story:\n{story_body.strip()}\n"
+    )
+    book_path.write_text(book_text, encoding="utf-8")
+
+    sidecar_payload = {
+        "book_name": book_path.stem,
+        "source_path": str(book_path),
+        "creation_request": request,
+        "classification": final_record,
+        "story_preview": story_body[:600],
+    }
+    sidecar_path = _save_book_metadata(book_path, sidecar_payload)
+
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+
+    return json.dumps(
+        {
+            "status": "created",
+            "path": str(book_path),
+            "metadata_path": str(sidecar_path),
+            "classification": final_record,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@tool(
+    "ReadBook",
+    response_format="content",
+    description="Read a book safely from library/ and return its text plus any saved metadata."
+)
+def read_book(book_name: str) -> str:
+    """Read a book stored in library/ without allowing path traversal."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    metadata = _load_book_metadata(book_path)
+    return (
+        f"Path: {book_path}\n"
+        f"Metadata: {json.dumps(metadata, ensure_ascii=False, indent=2)}\n\n"
+        f"{content}"
+    )
+
+
+@tool(
+    "UpdateBookMetadata",
+    response_format="content",
+    description="Update the metadata sidecar for a book in library/ safely. This updates category information without leaving the library folder."
+)
+def update_book_metadata(book_name: str, genre: str = None, theme: str = None, audience: str = None, reading_level: str = None, moral: str = None) -> str:
+    """Update metadata for a book inside library/ only."""
+    book_path = _resolve_library_text_path(book_name)
+    metadata = _load_book_metadata(book_path)
+    classification = dict(metadata.get("classification", {}))
+
+    updates = {
+        "genre": genre,
+        "theme": theme,
+        "audience": audience,
+        "reading_level": reading_level,
+        "moral": moral,
+    }
+    for key, value in updates.items():
+        if value:
+            classification[key] = value
+
+    metadata["book_name"] = book_path.stem
+    metadata["source_path"] = str(book_path)
+    metadata["classification"] = classification
+    sidecar_path = _save_book_metadata(book_path, metadata)
+
+    return json.dumps(
+        {
+            "status": "updated",
+            "path": str(book_path),
+            "metadata_path": str(sidecar_path),
+            "classification": classification,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@tool(
+    "RenameBook",
+    response_format="content",
+    description="Rename or move a book safely within library/ by changing its filename and matching metadata sidecar."
+)
+def rename_book(book_name: str, new_name: str) -> str:
+    """Rename a book inside library/ only."""
+    source_path = _resolve_library_text_path(book_name)
+    new_stem = _sanitize_book_stem(_validate_library_leaf_name(new_name))
+    root = _library_root()
+    target_path = root / f"{new_stem}.txt"
+
+    if source_path.resolve() == target_path.resolve():
+        return json.dumps(
+            {
+                "status": "unchanged",
+                "path": str(source_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    if target_path.exists():
+        target_path = _unique_library_text_path(new_stem)
+
+    source_sidecar = _book_sidecar_path(source_path)
+    target_sidecar = _book_sidecar_path(target_path)
+
+    source_path.rename(target_path)
+    if source_sidecar.exists():
+        source_sidecar.rename(target_sidecar)
+        metadata = _load_book_metadata(target_path)
+        metadata["book_name"] = target_path.stem
+        metadata["source_path"] = str(target_path)
+        classification = dict(metadata.get("classification", {}))
+        classification["title"] = target_path.stem.replace("_", " ")
+        metadata["classification"] = classification
+        _save_book_metadata(target_path, metadata)
+    elif target_sidecar.exists():
+        metadata = _load_book_metadata(target_path)
+        metadata["book_name"] = target_path.stem
+        metadata["source_path"] = str(target_path)
+        _save_book_metadata(target_path, metadata)
+
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+
+    return json.dumps(
+        {
+            "status": "renamed",
+            "from": str(source_path),
+            "to": str(target_path),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @tool(
@@ -295,4 +611,4 @@ def moral_creator(query: str, book_name: str = None) -> str:
         return (sentences[0].strip() if sentences else "No moral found from the provided text.")
 
 
-toolbox = [classify_book, retrieve_context, summarize, moral_creator]
+toolbox = [create_book, read_book, update_book_metadata, rename_book, classify_book, retrieve_context, summarize, moral_creator]
