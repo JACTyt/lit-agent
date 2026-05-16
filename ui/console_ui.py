@@ -3,6 +3,7 @@
 Provides a friendly chat loop, session history, and saves sessions to disk.
 """
 from agent.agent import init_agent, AGENT_NAME
+from agent.llm_provider import get_llm_provider, get_chat_model_name
 from scripts.extract_answer import extract_answer
 from rag.ingest import ingest_books
 import datetime
@@ -153,6 +154,7 @@ def run(session_dir: str = "sessions"):
                     "  /extract  : Run the concise-answer extractor over the session raw outputs",
                     "  /restore <id> : Restore a previously saved session by id or name",
                     "  /reimport : Re-ingest books from library/ (fallback: books/) into ChromaDB",
+                    "  /models   : Show active LLM provider and model configuration",
                 ]
                 help_text = "\n".join(help_lines)
                 print(help_text)
@@ -239,6 +241,36 @@ def run(session_dir: str = "sessions"):
                 print("Extracted:")
                 print(extracted)
                 history.append({"user": user_input, "ai": extracted, "raw": ""})
+                try:
+                    with open(autosave_path, "w", encoding="utf-8") as fh:
+                        json.dump({"history": history, "session_id": session_id}, fh, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                continue
+            if cmd == "/models":
+                try:
+                    import os
+                    provider = get_llm_provider()
+                    model = get_chat_model_name()
+                    if provider == "openai":
+                        embed = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+                        base = "https://api.openai.com/v1"
+                    elif provider == "lmstudio":
+                        embed = os.getenv("LM_STUDIO_EMBED_MODEL", "nomic-embed-text-v1.5")
+                        base = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+                    else:
+                        embed = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+                        base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                    models_info = (
+                        f"Provider : {provider}\n"
+                        f"Chat model: {model}\n"
+                        f"Embed model: {embed}\n"
+                        f"Base URL  : {base}"
+                    )
+                except Exception as exc:
+                    models_info = f"Could not read model config: {exc}"
+                print(models_info)
+                history.append({"user": user_input, "ai": models_info, "raw": ""})
                 try:
                     with open(autosave_path, "w", encoding="utf-8") as fh:
                         json.dump({"history": history, "session_id": session_id}, fh, ensure_ascii=False, indent=2)

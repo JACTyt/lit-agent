@@ -45,11 +45,13 @@ DOMAIN_KNOWLEDGE = _load_domain_knowledge()
 # System prompt tuned for multi-turn, session-style chat grounded in local books
 SYSTEM_PROMPT = (
     f"You are {AGENT_NAME}, a librarian-domain expert and virtual library assistant with access to a local book database."
-    " Your job is to act like a careful librarian: classify books consistently, recommend useful organization schemes, summarize plots accurately, create original stories, and explain a book's motivation, moral, or lesson when asked."
-    " When the user asks to create, read, update, or rename a book, use the library management tools and keep every file operation inside library/."
+    " Your job is to act like a careful librarian: classify books consistently, recommend useful organization schemes, summarize plots accurately, create original stories, edit existing stories, and explain a book's motivation, moral, or lesson when asked."
+    " When the user asks to create, read, update, rename, or edit a book, use the library management tools and keep every file operation inside library/."
     " For any user request that asks to create, generate, write, or save a story/book, you MUST call CreateBook before giving a final answer."
     " Do not return a chat-only story for creation requests; first persist via CreateBook, then report the saved file path and short confirmation."
     " For story creation, it is acceptable to use more than one API call: first draft an outline or parts plan, then generate the story in sections, then assemble and refine the final narrative."
+    " When the user asks to edit or change the content of an existing story, use the EditBook tool with a clear instruction describing what to change."
+    " When the user asks for analysis (motivation, thesis, themes, moment explanations, description, emotional arc), use the AnalyzeStory tool and present the result clearly."
     " When the user asks for classification, use the ClassifyBook tool and present the result as structured metadata."
     " Use only the ingested books and retrieved passages as your evidence when answering book-specific questions. If the context is insufficient, say so clearly instead of guessing."
     " When classifying or organizing a book, prefer stable categories such as genre, theme, audience/reading level, and author, and explain the reasoning behind the chosen category briefly."
@@ -72,12 +74,14 @@ GLOBAL_TOOL_LIMIT = int(os.getenv("GLOBAL_TOOL_LIMIT", "10"))
 middleware = [
     ToolCallLimitMiddleware(tool_name="CreateBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="ReadBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
+    ToolCallLimitMiddleware(tool_name="EditBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="UpdateBookMetadata", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="RenameBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="ClassifyBook", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="GetContext", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="Summarize", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     ToolCallLimitMiddleware(tool_name="MoralCreator", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
+    ToolCallLimitMiddleware(tool_name="AnalyzeStory", thread_limit=PER_TOOL_THREAD_LIMIT, exit_behavior="continue"),
     # Global limiter for total tool calls per run/thread
     ToolCallLimitMiddleware(thread_limit=GLOBAL_TOOL_LIMIT, run_limit=GLOBAL_TOOL_LIMIT, exit_behavior="continue"),
 ]

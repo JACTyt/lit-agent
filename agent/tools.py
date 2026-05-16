@@ -824,4 +824,156 @@ def moral_creator(query: str, book_name: str = None) -> str:
         return (sentences[0].strip() if sentences else "No moral found from the provided text.")
 
 
-toolbox = [create_book, read_book, update_book_metadata, rename_book, classify_book, retrieve_context, summarize, moral_creator]
+@tool(
+    "EditBook",
+    response_format="content",
+    description=(
+        "Edit the narrative content of an existing book in library/. "
+        "Provide `instruction` describing what to change (e.g. 'make the ending happier', "
+        "'add a rival character in chapter 2', 'rewrite the opening paragraph'). "
+        "Optionally supply `section_hint` to narrow the edit to a specific scene or passage. "
+        "Saves the revised text back to the same file."
+    ),
+)
+def edit_book(book_name: str, instruction: str, section_hint: str = None) -> str:
+    """Edit the narrative text of an existing book inside library/ only."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+
+    header_lines: list[str] = []
+    story_lines: list[str] = []
+    in_story = False
+    for line in content.splitlines():
+        if not in_story and line.strip().lower().startswith("story:"):
+            in_story = True
+            after_label = line[line.lower().find("story:") + 6:]
+            if after_label.strip():
+                story_lines.append(after_label)
+        elif in_story:
+            story_lines.append(line)
+        else:
+            header_lines.append(line)
+
+    story_body = "\n".join(story_lines).strip()
+    header = "\n".join(header_lines).strip()
+
+    if section_hint:
+        prompt = (
+            f"You are editing a story. Locate the section that relates to: '{section_hint}'.\n"
+            f"Apply this change: {instruction}\n"
+            f"Return the COMPLETE revised story (all parts), not only the changed section.\n"
+            f"Output only narrative prose — no titles, headers, or metadata.\n\n"
+            f"Original story:\n{story_body}"
+        )
+    else:
+        prompt = (
+            f"Revise the following story according to this instruction: {instruction}\n"
+            f"Return the complete revised story narrative.\n"
+            f"Output only narrative prose — no titles, headers, or metadata.\n\n"
+            f"Original story:\n{story_body}"
+        )
+
+    try:
+        revised_body = _call_llm(prompt, temperature=0.75).strip()
+        revised_body = _strip_generated_headers(revised_body)
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
+
+    new_content = f"{header}\n\nStory:\n{revised_body}\n"
+    book_path.write_text(new_content, encoding="utf-8")
+
+    metadata = _load_book_metadata(book_path)
+    metadata["last_edit_instruction"] = instruction
+    _save_book_metadata(book_path, metadata)
+
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+
+    return json.dumps(
+        {
+            "status": "edited",
+            "path": str(book_path),
+            "instruction": instruction,
+            "story_preview": revised_body[:400],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@tool(
+    "AnalyzeStory",
+    response_format="content",
+    description=(
+        "Perform deep literary analysis of a book from library/. "
+        "Returns: motivation (what drives the protagonist), thesis (central message), "
+        "thoughts (key themes), key_moments (pivotal scene explanations), "
+        "brief_description (reader-friendly blurb), and emotional_arc. "
+        "Optionally supply `focus` to zoom in on a particular aspect."
+    ),
+)
+def analyze_story(book_name: str, focus: str = None) -> str:
+    """Return structured literary analysis of a book inside library/."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    metadata = _load_book_metadata(book_path)
+
+    focus_line = f"\nPay particular attention to: {focus}\n" if focus else ""
+
+    prompt = (
+        "Analyze the following story and return ONLY a valid JSON object with exactly these keys:\n"
+        "{\n"
+        '  "motivation": "What drives the protagonist — their core desire, fear, or need",\n'
+        '  "thesis": "The central argument or insight the story makes about life, people, or society",\n'
+        '  "thoughts": ["key theme or idea 1", "key theme or idea 2", "key theme or idea 3"],\n'
+        '  "key_moments": [\n'
+        '    {"moment": "brief scene label", "explanation": "why this moment matters to the whole story"}\n'
+        "  ],\n"
+        '  "brief_description": "2-3 sentence reader-friendly blurb without major spoilers",\n'
+        '  "emotional_arc": "How the emotional tone shifts from opening to close"\n'
+        "}\n"
+        "Base every answer strictly on evidence from the text. Do not invent facts.\n"
+        + focus_line
+        + f"\n\nStory text:\n{content}"
+    )
+
+    fallback: dict = {
+        "motivation": "Analysis unavailable — LLM call failed.",
+        "thesis": "Analysis unavailable — LLM call failed.",
+        "thoughts": [],
+        "key_moments": [],
+        "brief_description": metadata.get("classification", {}).get("theme", "No description available."),
+        "emotional_arc": "Analysis unavailable — LLM call failed.",
+    }
+
+    try:
+        raw = _call_llm(prompt, temperature=0.3)
+        parsed = _extract_json_object(raw)
+        result = {**fallback, **parsed} if parsed else {"raw_analysis": raw, **fallback}
+    except Exception as exc:
+        result = {**fallback, "error": str(exc)}
+
+    try:
+        meta = _load_book_metadata(book_path)
+        meta["analysis"] = result
+        _save_book_metadata(book_path, meta)
+    except Exception:
+        pass
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+toolbox = [
+    create_book,
+    read_book,
+    edit_book,
+    update_book_metadata,
+    rename_book,
+    classify_book,
+    retrieve_context,
+    summarize,
+    moral_creator,
+    analyze_story,
+]
