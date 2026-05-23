@@ -12,17 +12,17 @@ His heart hammered against his ribs as he stared at the blinking cursor. He knew
 
 Leo took a deep breath and realized that he didn't need to know everything to start. He remembered the builders of the internet and the rocket; neither had all the answers. They just needed to make one small step forward at a time. If he wanted to succeed, he had to stop looking for the whole mountain and just climb the first rock. He needed to trust that he could learn something new every day without failing the entire project.
 
-The thought of calling for help filled him with a strange mix of fear and hope. He knew his tech-savvy Auntie had a tablet that could help him navigate these digital hills. He could ask her to guide him through just one small part of the code. Leo decided that if he asked for help, he could finally build the game without breaking his computer. The first step was no longer a scary leap into the dark, but a small, brave move toward the light.
+The thought of calling for help filled him with a strange mix of fear and hope. He knew his tech-savvy Sophie had a tablet that could help him navigate these digital hills. He could ask her to guide him through just one small part of the code. Leo decided that if he asked for help, he could finally build the game without breaking his computer. The first step was no longer a scary leap into the dark, but a small, brave move toward the light.
 
 He typed. But the screen didn't change. Instead, a red light blinked. A loud beep made him jump. The code was wrong. It was a glitch. A big, scary glitch.
 
 "Oh no," Leo whispered. He put his head in his hands. The computer hummed, but Leo didn't hear it. He felt stuck. The game he wanted to make felt like it was made of giant walls he couldn't climb.
 
-Auntie saw the panic. She didn't say, "Don't worry." She didn't say, "You will learn." She just knelt down. Her voice was soft. "Leo, look."
+Sophie saw the panic. She didn't say, "Don't worry." She didn't say, "You will learn." She just knelt down. Her voice was soft. "Leo, look."
 
 Leo looked up.
 
-"We can do this one thing at a time," Auntie said. "Not the whole game."
+"We can do this one thing at a time," Sophie said. "Not the whole game."
 
 Leo blinked. The red light was still there. But he thought about it. If he did it all at once, he would break it. But what if he did just one tiny piece?
 
@@ -30,7 +30,7 @@ He took a deep breath. His heart beat fast.
 
 "Can I try just the first line?" Leo asked.
 
-"Yes," Auntie said. "You don't have to be perfect. Just start."
+"Yes," Sophie said. "You don't have to be perfect. Just start."
 
 Leo typed. One word. `print("hello world")`.
 

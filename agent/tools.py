@@ -492,7 +492,7 @@ def create_book(request: str, title: str = None, genre: str = None, theme: str =
         "final_story": "", "metadata": {},
     }
 
-    result = story_pipeline.invoke(initial_state)
+    result = story_pipeline.invoke(initial_state, config={"recursion_limit": 20})
 
     classification = result["metadata"].get("classification", {})
     book_path = _unique_library_text_path(classification.get("title") or request[:60])
@@ -884,6 +884,67 @@ def edit_book(book_name: str, instruction: str, section_hint: str = None) -> str
 
 
 @tool(
+    "FindReplaceInBook",
+    response_format="content",
+    description=(
+        "Do a literal find-and-replace inside an existing book file in library/. "
+        "Use this for precise text changes: renaming a character, fixing a typo, "
+        "swapping a word or phrase throughout the whole story. "
+        "The replacement is exact (case-sensitive). "
+        "Returns how many substitutions were made."
+    ),
+)
+def find_replace_in_book(book_name: str, find: str, replace: str) -> str:
+    """Replace every occurrence of `find` with `replace` in the book text and all sidecars."""
+    def _sub(obj):
+        """Recursively replace `find` with `replace` inside any JSON-like value."""
+        if isinstance(obj, str):
+            return obj.replace(find, replace)
+        if isinstance(obj, dict):
+            return {k: _sub(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sub(item) for item in obj]
+        return obj
+
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    count = content.count(find)
+    if count == 0:
+        return json.dumps({"status": "not_found", "find": find, "replacements": 0})
+
+    book_path.write_text(content.replace(find, replace), encoding="utf-8")
+
+    # Propagate into metadata sidecar
+    from datetime import datetime as _dt
+    metadata = _sub(_load_book_metadata(book_path))
+    entry = {"timestamp": _dt.utcnow().isoformat() + "Z",
+             "instruction": f"FindReplace: '{find}' → '{replace}'", "section_hint": None}
+    if not isinstance(metadata.get("edit_history"), list):
+        metadata["edit_history"] = []
+    metadata["edit_history"].append(entry)
+    _save_book_metadata(book_path, metadata)
+
+    # Propagate into characters sidecar if it exists
+    char_path = _characters_path(book_path)
+    if char_path.exists():
+        try:
+            char_data = json.loads(char_path.read_text(encoding="utf-8"))
+            char_path.write_text(
+                json.dumps(_sub(char_data), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+
+    return json.dumps({"status": "replaced", "path": str(book_path),
+                       "find": find, "replace": replace, "replacements": count})
+
+
+@tool(
     "AnalyzeStory",
     response_format="content",
     description=(
@@ -962,15 +1023,385 @@ def analyze_story(book_name: str, focus: str = None) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+@tool(
+    "UpdateCharacter",
+    response_format="content",
+    description=(
+        "Update a character's fields in a book's .characters.json sidecar. "
+        "Supply `character_name` to identify the character (case-insensitive). "
+        "Then provide any combination of: new_name, role, traits (list of strings), arc. "
+        "Use this to fix character metadata after a rename or story edit. "
+        "Returns the updated character record or lists available names if not found."
+    ),
+)
+def update_character(book_name: str, character_name: str,
+                     new_name: str = None, role: str = None,
+                     traits: list[str] = None, arc: str = None) -> str:
+    """Directly update a character entry in .characters.json without rewriting the story."""
+    book_path = _resolve_library_text_path(book_name)
+    char_data = _load_characters(book_path)
+    if not char_data:
+        return json.dumps({"status": "error", "error": "No .characters.json file found for this book."})
+
+    needle = character_name.lower()
+    found = False
+    for char in char_data.get("characters", []):
+        if char.get("name", "").lower() == needle:
+            found = True
+            if new_name:
+                char["name"] = new_name
+            if role is not None:
+                char["role"] = role
+            if traits is not None:
+                char["traits"] = traits
+            if arc is not None:
+                char["arc"] = arc
+            break
+
+    if not found:
+        available = [c.get("name") for c in char_data.get("characters", [])]
+        return json.dumps({"status": "not_found", "character_name": character_name,
+                           "available_names": available})
+
+    char_path = _characters_path(book_path)
+    char_path.write_text(json.dumps(char_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return json.dumps({"status": "updated", "book": book_path.stem,
+                       "character": new_name or character_name,
+                       "changes": {"new_name": new_name, "role": role, "traits": traits, "arc": arc}},
+                      ensure_ascii=False, indent=2)
+
+
+@tool(
+    "ListBooks",
+    response_format="content",
+    description=(
+        "List every book currently in library/ with its title, genre, theme, audience, "
+        "word count, and file name. Use this to discover what books exist before "
+        "recommending, searching, or operating on them."
+    ),
+)
+def list_books() -> str:
+    """Return a catalogue of all books in library/ without calling an LLM."""
+    root = _library_root()
+    books = []
+    for txt_path in sorted(root.glob("*.txt")):
+        meta = _load_book_metadata(txt_path)
+        cls = meta.get("classification", {})
+        text = txt_path.read_text(encoding="utf-8")
+        word_count = len(re.findall(r"\b\w+\b", text))
+        books.append({
+            "book_name": txt_path.stem,
+            "title": cls.get("title", txt_path.stem),
+            "genre": cls.get("genre", ""),
+            "theme": cls.get("theme", ""),
+            "audience": cls.get("audience", ""),
+            "word_count": word_count,
+        })
+    return json.dumps({"total": len(books), "books": books}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "DeleteBook",
+    response_format="content",
+    description=(
+        "Permanently delete a book and all its sidecar files (metadata, characters) "
+        "from library/. This is irreversible — only call it when the user explicitly "
+        "asks to delete or remove a book."
+    ),
+)
+def delete_book(book_name: str) -> str:
+    """Delete a book and its sidecars from library/. Irreversible."""
+    book_path = _resolve_library_text_path(book_name)
+    removed = [str(book_path)]
+    book_path.unlink()
+    for sidecar in [_book_sidecar_path(book_path), _characters_path(book_path)]:
+        if sidecar.exists():
+            sidecar.unlink()
+            removed.append(str(sidecar))
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+    return json.dumps({"status": "deleted", "removed_files": removed}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "GetBookStats",
+    response_format="content",
+    description=(
+        "Return quick statistics about a book: word count, character count, "
+        "sentence count, paragraph count, and estimated reading time in minutes. "
+        "No LLM call — instant results."
+    ),
+)
+def get_book_stats(book_name: str) -> str:
+    """Compute text statistics for a book without calling an LLM."""
+    book_path = _resolve_library_text_path(book_name)
+    text = book_path.read_text(encoding="utf-8")
+    words = re.findall(r"\b\w+\b", text)
+    sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    reading_time = max(1, len(words) // 200)
+    return json.dumps({
+        "book_name": book_path.stem,
+        "word_count": len(words),
+        "character_count": len(text),
+        "sentence_count": len(sentences),
+        "paragraph_count": len(paragraphs),
+        "estimated_reading_time_minutes": reading_time,
+    }, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "SearchLibrary",
+    response_format="content",
+    description=(
+        "Search the library by metadata fields without a vector search. "
+        "Supports filtering by genre, theme, audience, and a free-text keyword "
+        "that is matched across all classification fields. "
+        "Any omitted filter is ignored — you can combine them freely."
+    ),
+)
+def search_library(genre: str = None, theme: str = None,
+                   audience: str = None, keyword: str = None) -> str:
+    """Filter books by metadata fields — no LLM needed."""
+    root = _library_root()
+    results = []
+    for txt_path in sorted(root.glob("*.txt")):
+        meta = _load_book_metadata(txt_path)
+        cls = meta.get("classification", {})
+        all_fields = " ".join(str(v) for v in cls.values()).lower()
+
+        def _match(field: str, value: str) -> bool:
+            return value.lower() in (cls.get(field) or "").lower()
+
+        if genre and not _match("genre", genre):
+            continue
+        if theme and not _match("theme", theme):
+            continue
+        if audience and not _match("audience", audience):
+            continue
+        if keyword and keyword.lower() not in all_fields:
+            continue
+        results.append({
+            "book_name": txt_path.stem,
+            "title": cls.get("title", txt_path.stem),
+            "genre": cls.get("genre", ""),
+            "theme": cls.get("theme", ""),
+            "audience": cls.get("audience", ""),
+            "reading_level": cls.get("reading_level", ""),
+        })
+    return json.dumps({"count": len(results), "results": results}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "GetCharacterList",
+    response_format="content",
+    description=(
+        "Return the character roster for a book, loaded from its .characters.json sidecar. "
+        "Shows name, role, traits, and arc for every character. "
+        "No LLM call — reads the file directly."
+    ),
+)
+def get_character_list(book_name: str) -> str:
+    """Read the .characters.json sidecar and return the roster."""
+    book_path = _resolve_library_text_path(book_name)
+    char_data = _load_characters(book_path)
+    if not char_data:
+        return json.dumps({"status": "no_character_file", "book_name": book_path.stem})
+    return json.dumps({"book_name": book_path.stem, "characters": char_data}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "AppendToBook",
+    response_format="content",
+    description=(
+        "Generate a new section or chapter and append it to an existing book. "
+        "Provide `instruction` describing what should happen next "
+        "(e.g. 'add a chapter where the hero returns home'). "
+        "The new content is written at the end of the file."
+    ),
+)
+def append_to_book(book_name: str, instruction: str) -> str:
+    """LLM-generate a continuation and append it to the book file."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    tail = content[-3000:] if len(content) > 3000 else content
+
+    prompt = (
+        f"Continue the following story by writing a new section.\n"
+        f"Instruction: {instruction}\n"
+        f"Write only the new content to append — not the existing text.\n"
+        f"Output only narrative prose — no titles, headers, or metadata.\n\n"
+        f"End of existing story:\n{tail}"
+    )
+    try:
+        new_section = _strip_generated_headers(_call_llm(prompt, temperature=0.8).strip())
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
+
+    updated = content.rstrip() + "\n\n" + new_section + "\n"
+    book_path.write_text(updated, encoding="utf-8")
+
+    metadata = _load_book_metadata(book_path)
+    from datetime import datetime as _dt
+    entry = {"timestamp": _dt.utcnow().isoformat() + "Z",
+             "instruction": f"Append: {instruction}", "section_hint": None}
+    if not isinstance(metadata.get("edit_history"), list):
+        metadata["edit_history"] = []
+    metadata["edit_history"].append(entry)
+    _save_book_metadata(book_path, metadata)
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+    return json.dumps({
+        "status": "appended", "path": str(book_path),
+        "preview": new_section[:400],
+    }, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "ExtractQuotes",
+    response_format="content",
+    description=(
+        "Extract the most memorable or meaningful quotes from a book. "
+        "Returns each quote with a one-sentence explanation of its significance. "
+        "Optionally specify how many quotes to return (default 5)."
+    ),
+)
+def extract_quotes(book_name: str, count: int = 5) -> str:
+    """Use an LLM to pull notable quotes from the book text."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    prompt = (
+        f"Extract the {count} most memorable or meaningful quotes from the story below. "
+        "Return a JSON array where each element has keys: quote (exact text from the story) "
+        "and significance (one sentence explaining why it matters).\n\n"
+        f"Story:\n{content}"
+    )
+    try:
+        raw = _call_llm(prompt, temperature=0).strip()
+        match = re.search(r"\[[\s\S]*\]", raw)
+        quotes = json.loads(match.group()) if match else raw
+    except Exception:
+        quotes = raw
+    return json.dumps({"book": book_path.stem, "quotes": quotes}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "GenerateQuiz",
+    response_format="content",
+    description=(
+        "Generate comprehension questions about a book at mixed difficulty levels "
+        "(factual recall, inference, theme/moral). "
+        "Optionally specify how many questions (default 5). "
+        "Returns each question with its answer and difficulty rating."
+    ),
+)
+def generate_quiz(book_name: str, num_questions: int = 5) -> str:
+    """LLM-generate a reading comprehension quiz for the book."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+    prompt = (
+        f"Generate {num_questions} comprehension questions about the story below. "
+        "Mix difficulty: some factual recall, some inference, some theme or moral questions. "
+        "Return a JSON array where each element has keys: "
+        "question, answer, difficulty (easy/medium/hard).\n\n"
+        f"Story:\n{content}"
+    )
+    try:
+        raw = _call_llm(prompt, temperature=0.3).strip()
+        match = re.search(r"\[[\s\S]*\]", raw)
+        questions = json.loads(match.group()) if match else raw
+    except Exception:
+        questions = raw
+    return json.dumps({"book": book_path.stem, "quiz": questions}, ensure_ascii=False, indent=2)
+
+
+@tool(
+    "ChangeWritingStyle",
+    response_format="content",
+    description=(
+        "Rewrite the entire story in a different writing style while keeping the plot intact. "
+        "Examples of styles: 'formal and literary', 'casual and conversational', "
+        "'whimsical fairy tale', 'noir detective', 'minimalist', 'humorous'. "
+        "Saves the restyled text back to the same file."
+    ),
+)
+def change_writing_style(book_name: str, style: str) -> str:
+    """LLM rewrites the story in the requested style, preserving the plot."""
+    book_path = _resolve_library_text_path(book_name)
+    content = book_path.read_text(encoding="utf-8")
+
+    header_lines, story_lines, in_story = [], [], False
+    for line in content.splitlines():
+        if not in_story and line.strip().lower().startswith("story:"):
+            in_story = True
+            after = line[line.lower().find("story:") + 6:]
+            if after.strip():
+                story_lines.append(after)
+        elif in_story:
+            story_lines.append(line)
+        else:
+            header_lines.append(line)
+
+    story_body = "\n".join(story_lines).strip()
+    header = "\n".join(header_lines).strip()
+
+    prompt = (
+        f"Rewrite the following story in a '{style}' writing style. "
+        "Keep all plot events, character names, and the moral exactly the same — "
+        "only change the tone, vocabulary, sentence structure, and narrative voice. "
+        "Return only the rewritten narrative prose — no titles, headers, or metadata.\n\n"
+        f"Original story:\n{story_body}"
+    )
+    try:
+        restyled = _strip_generated_headers(_call_llm(prompt, temperature=0.7).strip())
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
+
+    new_content = f"{header}\n\nStory:\n{restyled}\n"
+    book_path.write_text(new_content, encoding="utf-8")
+
+    metadata = _load_book_metadata(book_path)
+    from datetime import datetime as _dt
+    entry = {"timestamp": _dt.utcnow().isoformat() + "Z",
+             "instruction": f"ChangeStyle to '{style}'", "section_hint": None}
+    if not isinstance(metadata.get("edit_history"), list):
+        metadata["edit_history"] = []
+    metadata["edit_history"].append(entry)
+    _save_book_metadata(book_path, metadata)
+    try:
+        ensure_books_ingested(verbose=False)
+    except Exception:
+        pass
+    return json.dumps({
+        "status": "restyled", "path": str(book_path),
+        "style": style, "preview": restyled[:400],
+    }, ensure_ascii=False, indent=2)
+
+
 toolbox = [
     create_book,
     read_book,
     edit_book,
+    find_replace_in_book,
+    append_to_book,
+    change_writing_style,
     update_book_metadata,
+    update_character,
     rename_book,
+    delete_book,
     classify_book,
     retrieve_context,
     summarize,
     moral_creator,
     analyze_story,
+    extract_quotes,
+    generate_quiz,
+    list_books,
+    search_library,
+    get_book_stats,
+    get_character_list,
 ]

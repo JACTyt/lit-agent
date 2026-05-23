@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from "react"
+import { useRef, useCallback } from "react"
 import Sidebar from "./Sidebar"
 import ChatView from "./ChatView"
 import StoryView from "./StoryView"
+import { useLocalState } from "../hooks/useLocalState"
 
 const SIDEBAR_MIN = 160
 const SIDEBAR_MAX = 400
@@ -51,10 +52,10 @@ const collapseBtn: React.CSSProperties = {
 }
 
 export default function Layout() {
-  const [selectedBook, setSelectedBook] = useState<string | null>(null)
-  const [sidebarW, setSidebarW] = useState(220)
-  const [centerW, setCenterW] = useState(480)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [selectedBook, setSelectedBook] = useLocalState<string | null>("layout.selectedBook", null)
+  const [sidebarW, setSidebarW] = useLocalState<number>("layout.sidebarW", 220)
+  const [centerW, setCenterW] = useLocalState<number>("layout.centerW", 480)
+  const [sidebarOpen, setSidebarOpen] = useLocalState<boolean>("layout.sidebarOpen", true)
 
   const dragSidebar = useDragHandle(useCallback((dx) => {
     setSidebarW(w => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w + dx)))

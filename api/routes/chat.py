@@ -21,8 +21,14 @@ def _get_agent():
     return _agent_instance
 
 
+class HistoryMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[HistoryMessage] = []
 
 
 @router.post("/chat")
@@ -33,9 +39,12 @@ async def chat(req: ChatRequest):
 
     async def _run():
         agent = _get_agent()
+        history_msgs = [{"role": m.role, "content": m.content} for m in req.history]
+        all_messages = history_msgs + [{"role": "user", "content": req.message}]
         try:
             async for event in agent.astream_events(
-                {"messages": [{"role": "user", "content": req.message}]},
+                {"messages": all_messages},
+                config={"recursion_limit": 60},
                 version="v2",
             ):
                 kind = event["event"]

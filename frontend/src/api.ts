@@ -97,11 +97,11 @@ export const api = {
   book: (name: string) => apiFetch<BookDetail>(`/library/${name}`),
   analysis: (name: string) => apiFetch<Analysis>(`/library/${name}/analysis`),
   characters: (name: string) => apiFetch<CharacterData>(`/library/${name}/characters`),
-  chat: (message: string) =>
+  chat: (message: string, history: Array<{ role: string; content: string }> = []) =>
     apiFetch<ChatResponse>("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history }),
     }),
   reimport: () => apiFetch<{ status: string; vectors: number }>("/reimport", { method: "POST" }),
 }
