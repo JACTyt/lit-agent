@@ -1,6 +1,9 @@
 {
+  "version": 2,
   "book_name": "The Starfish Thrower",
-  "source_path": "D:\\Repos\\Github\\Agents-research\\library\\The Starfish Thrower.txt",
+  "source_path": "library\\The Starfish Thrower.txt",
+  "created_at": "2026-05-18T17:43:37.758965Z",
+  "updated_at": "2026-05-18T17:43:37.758965Z",
   "classification": {
     "title": "The Starfish Thrower",
     "genre": "short story",
@@ -8,5 +11,9 @@
     "audience": "general",
     "reading_level": "easy",
     "moral": "Small acts of help matter, even when the larger problem seems overwhelming."
-  }
+  },
+  "pipeline": {},
+  "analysis": {},
+  "edit_history": [],
+  "characters_path": null
 }

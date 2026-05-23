@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "story": "Hello_world_for_dumb",
+  "extracted_at": "2026-05-23T13:59:37.728013Z",
+  "world": {
+    "setting": "Leo's cluttered bedroom with a new tablet and a big, intimidating computer screen.",
+    "time_period": "",
+    "tone": "learning, perseverance, and overcoming fear of technology"
+  },
+  "characters": [
+    {
+      "name": "Leo",
+      "role": "character",
+      "traits": [],
+      "arc": "",
+      "first_appears": ""
+    },
+    {
+      "name": "Tech-savvy Auntie",
+      "role": "character",
+      "traits": [],
+      "arc": "",
+      "first_appears": ""
+    }
+  ]
+}

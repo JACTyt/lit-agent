@@ -1,7 +1,9 @@
 {
+  "version": 2,
   "book_name": "Shadows_of_Deceit",
-  "source_path": "D:\\Repos\\Github\\Agents-research\\library\\Shadows_of_Deceit.txt",
-  "creation_request": "In a bustling city filled with secrets, two private detectives, Alex and Jamie, are drawn together by a chilling murder case that has left the police baffled. As they delve deeper into the investigation, they uncover a web of deceit, hidden motives, and a mysterious figure who seems to be one step ahead of them. Despite their contrasting personalities—Alex, the intuitive and empathetic detective, and Jamie, the analytical and methodical thinker—they must learn to work together, navigating their differences and personal conflicts. As they piece together clues, they find themselves entangled in a dangerous game where trust is scarce, and every lead could be a trap. With time running out and the stakes rising, they must confront not only the murderer but also their own demons to bring justice to the victim and perhaps find a deeper connection between themselves.",
+  "source_path": "library\\Shadows_of_Deceit.txt",
+  "created_at": "2026-05-18T17:43:37.736930Z",
+  "updated_at": "2026-05-18T17:43:37.736930Z",
   "classification": {
     "title": "Shadows of Deceit",
     "genre": "mystery thriller",
@@ -10,5 +12,8 @@
     "reading_level": "middle",
     "moral": "Collaboration and understanding can overcome personal differences in the pursuit of justice."
   },
-  "story_preview": "Shadows of Deceit is a short story about trust, teamwork, and the search for truth. It is written for general readers and emphasizes collaboration and understanding can overcome personal differences in the pursuit of justice."
+  "pipeline": {},
+  "analysis": {},
+  "edit_history": [],
+  "characters_path": null
 }

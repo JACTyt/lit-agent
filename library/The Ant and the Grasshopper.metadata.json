@@ -1,6 +1,9 @@
 {
+  "version": 2,
   "book_name": "The Ant and the Grasshopper",
-  "source_path": "D:\\Repos\\Github\\Agents-research\\library\\The Ant and the Grasshopper.txt",
+  "source_path": "library\\The Ant and the Grasshopper.txt",
+  "created_at": "2026-05-18T17:43:37.744692Z",
+  "updated_at": "2026-05-18T17:43:37.744692Z",
   "classification": {
     "title": "The Ant and the Grasshopper",
     "genre": "fable",
@@ -8,5 +11,9 @@
     "audience": "children",
     "reading_level": "easy",
     "moral": "Planning ahead and working steadily matters more than wasting time on amusement when important needs must be met."
-  }
+  },
+  "pipeline": {},
+  "analysis": {},
+  "edit_history": [],
+  "characters_path": null
 }

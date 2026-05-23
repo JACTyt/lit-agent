@@ -97,6 +97,38 @@ def _book_sidecar_path(book_path: Path) -> Path:
     return book_path.with_suffix(".metadata.json")
 
 
+def _characters_path(book_path: Path) -> Path:
+    return book_path.with_suffix(".characters.json")
+
+
+def _write_characters_json(book_path: Path, char_data: dict) -> Path:
+    path = _characters_path(book_path)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(char_data, fh, ensure_ascii=False, indent=2)
+    return path
+
+
+def _load_characters(book_path: Path) -> dict | None:
+    path = _characters_path(book_path)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _build_character_card(char_data: dict) -> str:
+    lines = ["## Character roster — do not rename or recast these characters"]
+    for c in char_data.get("characters", []):
+        traits = ", ".join(c.get("traits", []))
+        lines.append(f"• {c['name']} ({c.get('role','')}) — {traits}. Arc: {c.get('arc','')}.")
+    world = char_data.get("world", {})
+    if world.get("setting"):
+        lines.append(f"\n## World\nSetting: {world['setting']} ({world.get('time_period','')}, {world.get('tone','')})")
+    return "\n".join(lines)
+
+
 def _is_within_library(path: Path) -> bool:
     try:
         path.resolve().relative_to(_library_root())
@@ -116,7 +148,18 @@ def _load_book_metadata(book_path: Path) -> dict:
         return {}
 
 
+def _ensure_schema_v2(metadata: dict, book_path: Path) -> dict:
+    """Upgrade v1 sidecar to v2 in-place on first write. Idempotent."""
+    if metadata.get("version") == 2:
+        return metadata
+    from scripts.migrate_schema import migrate_sidecar
+    return migrate_sidecar(metadata, str(book_path))
+
+
 def _save_book_metadata(book_path: Path, payload: dict) -> Path:
+    payload = _ensure_schema_v2(payload, book_path)
+    from datetime import datetime
+    payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
     sidecar_path = _book_sidecar_path(book_path)
     with open(sidecar_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -432,131 +475,59 @@ def _persist_classification_metadata(book_name: str, metadata: dict) -> str | No
     response_format="content",
     description="Create an original book, save it safely into library/, and return its saved path plus metadata. Use `request` to describe the story to generate."
 )
-def create_book(request: str, title: str = None, genre: str = None, theme: str = None, audience: str = None, reading_level: str = None, moral: str = None) -> str:
-    """Create a new original book and persist it inside library/ only."""
-    outline_prompt = (
-        "Create a compact story outline in valid JSON only with keys: title, genre, theme, audience, reading_level, moral, characters, conflict, resolution, setting. "
-        "The outline should be specific enough to support a complete original story in multiple parts. "
-        "Do not write the full story yet.\n"
-        f"Requested story idea: {request}\n"
-        f"Requested title: {title or 'auto'}\n"
-        f"Requested genre: {genre or 'auto'}\n"
-        f"Requested theme: {theme or 'auto'}\n"
-        f"Requested audience: {audience or 'auto'}\n"
-        f"Requested reading level: {reading_level or 'auto'}\n"
-        f"Requested moral: {moral or 'auto'}\n"
-    )
+def create_book(request: str, title: str = None, genre: str = None, theme: str = None,
+                audience: str = None, reading_level: str = None, moral: str = None) -> str:
+    """Create a new original book using the LangGraph pipeline and persist it inside library/ only."""
+    from pipeline.graph import pipeline as story_pipeline
+    from datetime import datetime
 
-    try:
-        outline_text = _call_llm(outline_prompt, temperature=0.4)
-    except Exception:
-        outline_text = ""
+    params = {k: v for k, v in {
+        "title": title, "genre": genre, "theme": theme,
+        "audience": audience, "reading_level": reading_level, "moral": moral,
+    }.items() if v}
 
-    outline = _extract_json_object(outline_text)
-    title_value = (outline.get("title") or title or "").strip() or _sanitize_book_stem(request[:60] or "Untitled Book").replace("_", " ").title()
-    fallback = _extract_taxonomy_from_text(f"{request}\n{outline_text}")
-
-    final_record = {
-        "title": title_value,
-        "genre": outline.get("genre") or genre or fallback["genre"],
-        "theme": outline.get("theme") or theme or fallback["theme"],
-        "audience": outline.get("audience") or audience or fallback["audience"],
-        "reading_level": outline.get("reading_level") or reading_level or fallback["reading_level"],
-        "moral": outline.get("moral") or moral or fallback["lesson_hint"],
+    initial_state = {
+        "request": request, "params": params, "outline": {}, "draft": "",
+        "critic_score": 0.0, "critic_feedback": "", "retry_count": 0,
+        "final_story": "", "metadata": {},
     }
 
-    part_one_prompt = (
-        "Write Part 1 of an original children's story in 4 rich paragraphs and at least 280 words. "
-        "Include character introductions, vivid setting details, clear motivations, and an early conflict. "
-        "Use concrete scenes and dialogue. Do not resolve the central conflict yet.\n\n"
-        f"Story request: {request}\n"
-        f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
-    )
-    part_two_prompt = (
-        "Write Part 2 of the same story in 4 rich paragraphs and at least 280 words. "
-        "Continue seamlessly from Part 1, raise stakes, deliver an emotional turning point, and resolve the conflict with a satisfying ending. "
-        "Integrate the moral naturally through character choices, not as a lecture.\n\n"
-        f"Story request: {request}\n"
-        f"Outline JSON:\n{json.dumps(outline or final_record, ensure_ascii=False, indent=2)}"
-    )
+    result = story_pipeline.invoke(initial_state)
 
-    try:
-        part_one = _call_llm(part_one_prompt, temperature=0.8).strip()
-    except Exception:
-        part_one = ""
+    classification = result["metadata"].get("classification", {})
+    book_path = _unique_library_text_path(classification.get("title") or request[:60])
+    book_path.write_text(result["final_story"], encoding="utf-8")
 
-    try:
-        part_two = _call_llm(part_two_prompt, temperature=0.8).strip()
-    except Exception:
-        part_two = ""
-
-    part_one = _strip_generated_headers(part_one)
-    part_two = _strip_generated_headers(part_two)
-
-    if not part_one:
-        part_one = _build_structured_fallback_story(final_record, outline, request)
-
-    if not part_two:
-        part_two = ""
-
-    story_body = _strip_generated_headers(f"{part_one.rstrip()}\n\n{part_two.lstrip()}")
-
-    if _is_low_quality_story(story_body):
-        single_pass_prompt = (
-            "Write a complete, captivating children's story between 700 and 1100 words. "
-            "The story must include: a memorable protagonist, at least two supporting characters, a specific setting, a concrete conflict, rising action, a turning point, and a heartfelt resolution. "
-            "Use descriptive language, short dialogue snippets, and emotionally meaningful choices. "
-            "Do not output headers, bullets, or JSON; output only narrative prose.\n\n"
-            f"Story request: {request}\n"
-            f"Story profile: {json.dumps(outline or final_record, ensure_ascii=False)}"
-        )
-        try:
-            enhanced = _strip_generated_headers(_call_llm(single_pass_prompt, temperature=0.85).strip())
-        except Exception:
-            enhanced = ""
-
-        if not _is_low_quality_story(enhanced):
-            story_body = enhanced
-        else:
-            story_body = _build_structured_fallback_story(final_record, outline, request)
-
-    book_path = _unique_library_text_path(final_record["title"])
-    book_text = (
-        f"Title: {final_record['title']}\n"
-        f"Genre: {final_record['genre']}\n"
-        f"Theme: {final_record['theme']}\n"
-        f"Audience: {final_record['audience']}\n"
-        f"Reading level: {final_record['reading_level']}\n"
-        f"Moral: {final_record['moral']}\n\n"
-        f"Story:\n{story_body.strip()}\n"
-    )
-    book_path.write_text(book_text, encoding="utf-8")
-
-    sidecar_payload = {
+    now = datetime.utcnow().isoformat() + "Z"
+    sidecar = {
+        **result["metadata"],
         "book_name": book_path.stem,
         "source_path": str(book_path),
-        "creation_request": request,
-        "classification": final_record,
-        "story_preview": story_body[:600],
+        "created_at": now,
+        "story_preview": result["draft"][:600],
     }
-    sidecar_path = _save_book_metadata(book_path, sidecar_payload)
+
+    # Write .characters.json if the planner extracted character data
+    char_data = sidecar.pop("_char_data", None)
+    if char_data:
+        char_data["story"] = book_path.stem
+        char_path = _write_characters_json(book_path, char_data)
+        sidecar["characters_path"] = str(char_path)
+
+    sidecar_path = _save_book_metadata(book_path, sidecar)
 
     try:
         ensure_books_ingested(verbose=False)
     except Exception:
         pass
 
-    return json.dumps(
-        {
-            "status": "created",
-            "path": str(book_path),
-            "metadata_path": str(sidecar_path),
-            "classification": final_record,
-            "story": story_body,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    return json.dumps({
+        "status": "created",
+        "path": str(book_path),
+        "metadata_path": str(sidecar_path),
+        "classification": classification,
+        "story": result["draft"],
+    }, ensure_ascii=False, indent=2)
 
 
 @tool(
@@ -857,8 +828,12 @@ def edit_book(book_name: str, instruction: str, section_hint: str = None) -> str
     story_body = "\n".join(story_lines).strip()
     header = "\n".join(header_lines).strip()
 
+    char_data = _load_characters(book_path)
+    char_block = (_build_character_card(char_data) + "\n\n") if char_data else ""
+
     if section_hint:
         prompt = (
+            f"{char_block}"
             f"You are editing a story. Locate the section that relates to: '{section_hint}'.\n"
             f"Apply this change: {instruction}\n"
             f"Return the COMPLETE revised story (all parts), not only the changed section.\n"
@@ -867,6 +842,7 @@ def edit_book(book_name: str, instruction: str, section_hint: str = None) -> str
         )
     else:
         prompt = (
+            f"{char_block}"
             f"Revise the following story according to this instruction: {instruction}\n"
             f"Return the complete revised story narrative.\n"
             f"Output only narrative prose — no titles, headers, or metadata.\n\n"
@@ -883,7 +859,11 @@ def edit_book(book_name: str, instruction: str, section_hint: str = None) -> str
     book_path.write_text(new_content, encoding="utf-8")
 
     metadata = _load_book_metadata(book_path)
-    metadata["last_edit_instruction"] = instruction
+    from datetime import datetime as _dt
+    entry = {"timestamp": _dt.utcnow().isoformat() + "Z", "instruction": instruction, "section_hint": section_hint}
+    if "edit_history" not in metadata or not isinstance(metadata.get("edit_history"), list):
+        metadata["edit_history"] = []
+    metadata["edit_history"].append(entry)
     _save_book_metadata(book_path, metadata)
 
     try:
@@ -959,6 +939,23 @@ def analyze_story(book_name: str, focus: str = None) -> str:
         meta = _load_book_metadata(book_path)
         meta["analysis"] = result
         _save_book_metadata(book_path, meta)
+    except Exception:
+        pass
+
+    # Merge arc updates back into .characters.json if it exists
+    try:
+        char_path_str = metadata.get("characters_path")
+        if char_path_str:
+            char_path = Path(char_path_str)
+            if char_path.exists():
+                char_data = json.loads(char_path.read_text(encoding="utf-8"))
+                key_moments = result.get("key_moments", [])
+                moment_texts = " ".join(m.get("explanation", "") for m in key_moments if isinstance(m, dict))
+                for char in char_data.get("characters", []):
+                    name = char.get("name", "").lower()
+                    if name and name in moment_texts.lower():
+                        char["arc"] = char.get("arc") or result.get("emotional_arc", "")
+                char_path.write_text(json.dumps(char_data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
 

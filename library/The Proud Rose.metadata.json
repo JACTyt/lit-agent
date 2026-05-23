@@ -1,6 +1,9 @@
 {
+  "version": 2,
   "book_name": "The Proud Rose",
-  "source_path": "D:\\Repos\\Github\\Agents-research\\library\\The Proud Rose.txt",
+  "source_path": "library\\The Proud Rose.txt",
+  "created_at": "2026-05-18T17:43:37.751886Z",
+  "updated_at": "2026-05-18T17:43:37.751886Z",
   "classification": {
     "title": "The Proud Rose",
     "genre": "moral tale",
@@ -8,5 +11,9 @@
     "audience": "general",
     "reading_level": "easy",
     "moral": "Pride can blind us to the worth of others, while humility and kindness help us survive difficult times."
-  }
+  },
+  "pipeline": {},
+  "analysis": {},
+  "edit_history": [],
+  "characters_path": null
 }

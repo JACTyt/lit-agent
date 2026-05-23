@@ -1,7 +1,9 @@
 {
+  "version": 2,
   "book_name": "The_Little_Rabbits_Big_Heart",
-  "source_path": "D:\\Repos\\Github\\Agents-research\\library\\The_Little_Rabbits_Big_Heart.txt",
-  "creation_request": "A story about a young rabbit who learns the value of kindness and helping others, and how it brings joy and happiness to both the giver and receiver.",
+  "source_path": "library\\The_Little_Rabbits_Big_Heart.txt",
+  "created_at": "2026-05-18T17:43:37.767589Z",
+  "updated_at": "2026-05-18T17:43:37.767589Z",
   "classification": {
     "title": "The Little Rabbit's Big Heart",
     "genre": "moral tale",
@@ -10,5 +12,8 @@
     "reading_level": "easy",
     "moral": "Be kind to others and help those in need."
   },
-  "story_preview": "On the edge of the river town of Lantern Vale, Mira carried a satchel full of stubby pencils and folded paper. While other children hurried past the old market square, Mira stopped to sketch faces, rooftops, and stray cats curled in sunlight. Everyone knew Mira could notice beauty in ordinary things, but almost no one knew how deeply Mira feared making mistakes in front of others. That fear mattered now, because the whole town was preparing for a celebration and trouble had already begun to spread.\n\nThe first sign of danger arrived at dawn: bright festival banners had been painted overnight, t"
+  "pipeline": {},
+  "analysis": {},
+  "edit_history": [],
+  "characters_path": null
 }
