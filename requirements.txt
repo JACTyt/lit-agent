@@ -1,0 +1,32 @@
+# ── Web API ───────────────────────────────────────────────────────────────────
+fastapi==0.136.1
+uvicorn==0.41.0
+sse-starlette==3.4.4
+pydantic==2.12.5
+
+# ── LangChain core ────────────────────────────────────────────────────────────
+langchain==1.2.10
+langchain-core==1.2.28
+langchain-community==0.4.1
+
+# ── LLM providers (install at least one) ─────────────────────────────────────
+langchain-openai==1.1.10       # OpenAI / Azure OpenAI
+langchain-ollama==1.1.0        # Local models via Ollama
+
+# ── Vector store ──────────────────────────────────────────────────────────────
+langchain-chroma==1.1.0
+chromadb==1.5.2
+
+# ── Agent / graph runtime ─────────────────────────────────────────────────────
+langgraph==1.0.9
+
+# ── OpenAI SDK & tokeniser ────────────────────────────────────────────────────
+openai==2.24.0
+tiktoken==0.12.0
+
+# ── HTTP client ───────────────────────────────────────────────────────────────
+httpx==0.28.1
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv==1.2.1
+tqdm==4.67.3
