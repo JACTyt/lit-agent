@@ -8,6 +8,15 @@
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: system-ui, sans-serif; background: #0f0f13; color: #e5e7eb; height: 100vh; }
       #root { height: 100vh; display: flex; }
+
+      /* Scrollbar — Webkit */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2e2e42; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #4f46e5; }
+
+      /* Scrollbar — Firefox */
+      * { scrollbar-width: thin; scrollbar-color: #2e2e42 transparent; }
     </style>
   </head>
   <body>

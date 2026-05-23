@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from agent.agent import init_agent
-from scripts.extract_answer import extract_answer
 
 router = APIRouter()
 _agent_instance = None
@@ -34,27 +33,27 @@ async def chat(req: ChatRequest):
 
     async def _run():
         agent = _get_agent()
-        collected = ""
         try:
-            for step in agent.stream({"messages": [{"role": "user", "content": req.message}]}):
-                raw = str(step)
-                collected += raw
-                if isinstance(step, dict):
-                    for v in step.values():
-                        if isinstance(v, dict):
-                            msgs = v.get("messages", [])
-                            for m in (msgs if isinstance(msgs, list) else [msgs]):
-                                content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else None)
-                                if content:
-                                    for token in str(content).split():
-                                        await queue.put(json.dumps({"type": "token", "text": token + " "}))
-                                        await asyncio.sleep(0)
+            async for event in agent.astream_events(
+                {"messages": [{"role": "user", "content": req.message}]},
+                version="v2",
+            ):
+                kind = event["event"]
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk:
+                        content = getattr(chunk, "content", "") or ""
+                        if content:
+                            await queue.put(json.dumps({"type": "token", "text": content}))
+                elif kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    if tool_name:
+                        await queue.put(json.dumps({"type": "tool_call", "tool": tool_name}))
         except Exception as exc:
-            await queue.put(json.dumps({"type": "token", "text": f"Error: {exc}"}))
+            await queue.put(json.dumps({"type": "token", "text": f"\n[Error: {exc}]"}))
         finally:
-            reply = extract_answer(collected)
-            await queue.put(json.dumps({"type": "done", "reply": reply}))
-            await queue.put(None)  # sentinel
+            await queue.put(json.dumps({"type": "done", "reply": ""}))
+            await queue.put(None)
 
     asyncio.create_task(_run())
     return {"run_id": run_id, "status": "streaming"}
