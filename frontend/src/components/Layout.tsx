@@ -1,4 +1,5 @@
 import { useRef, useCallback } from "react"
+import { ChevronRight } from "lucide-react"
 import Sidebar from "./Sidebar"
 import ChatView from "./ChatView"
 import StoryView from "./StoryView"
@@ -95,7 +96,7 @@ export default function Layout() {
             style={collapseBtn}
             title="Show sidebar"
             onClick={() => setSidebarOpen(true)}
-          >▶</button>
+          ><ChevronRight size={16} /></button>
         </div>
       )}
 

@@ -7,12 +7,11 @@ import re
 from pathlib import Path
 
 from agent.llm_provider import get_chat_llm, get_embeddings
-from rag.constants import DB_PATH, COLLECTION_NAME
+from rag.constants import DB_PATH, COLLECTION_NAME, LIBRARY_DIR
 from rag.ingest import ensure_books_ingested
 from rag.retriever import get_retriever
 
 load_dotenv()
-LIBRARY_DIR = Path("library")
 
 # Create embeddings function (shared singleton — see llm_provider.get_embeddings)
 embeddings = get_embeddings()

@@ -103,5 +103,35 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, history }),
     }),
+  updateMetadata: (name: string, classification: Partial<Classification>) =>
+    apiFetch<{ status: string }>(`/library/${name}/metadata`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classification }),
+    }),
+  updateAnalysis: (name: string, analysis: Partial<Analysis>) =>
+    apiFetch<{ status: string }>(`/library/${name}/analysis`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(analysis),
+    }),
+  updateCharacters: (name: string, data: CharacterData) =>
+    apiFetch<{ status: string }>(`/library/${name}/characters`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  updateBookText: (name: string, text: string) =>
+    apiFetch<{ status: string; book_name: string; length: number }>(`/library/${name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+  replaceInBook: (name: string, find: string, replace: string, caseSensitive = false) =>
+    apiFetch<{ status: string; replacements: number; changed: boolean }>(`/library/${name}/replace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ find, replace, case_sensitive: caseSensitive }),
+    }),
   reimport: () => apiFetch<{ status: string; vectors: number }>("/reimport", { method: "POST" }),
 }

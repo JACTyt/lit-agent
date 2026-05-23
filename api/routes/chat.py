@@ -13,12 +13,20 @@ router = APIRouter()
 _agent_instance = None
 _run_store: dict[str, asyncio.Queue] = {}
 
+# How long to keep an unconsumed run before discarding it (seconds)
+_RUN_TTL = 300
+
 
 def _get_agent():
     global _agent_instance
     if _agent_instance is None:
         _agent_instance = init_agent()
     return _agent_instance
+
+
+def warmup() -> None:
+    """Initialize the agent eagerly. Call at startup to avoid first-request latency."""
+    _get_agent()
 
 
 class HistoryMessage(BaseModel):
@@ -29,6 +37,15 @@ class HistoryMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[HistoryMessage] = []
+
+
+async def _expire_run(run_id: str) -> None:
+    """Remove a run from the store after TTL if it was never consumed."""
+    await asyncio.sleep(_RUN_TTL)
+    queue = _run_store.pop(run_id, None)
+    if queue is not None:
+        # Unblock any consumer that somehow shows up late
+        await queue.put(None)
 
 
 @router.post("/chat")
@@ -65,6 +82,7 @@ async def chat(req: ChatRequest):
             await queue.put(None)
 
     asyncio.create_task(_run())
+    asyncio.create_task(_expire_run(run_id))
     return {"run_id": run_id, "status": "streaming"}
 
 

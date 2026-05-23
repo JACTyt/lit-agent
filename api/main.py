@@ -1,10 +1,24 @@
+import asyncio
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 from api.routes import chat, library, system
 
-app = FastAPI(title="Lit-Agent", version="2.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, chat.warmup)
+    except Exception as exc:
+        print(f"[startup] agent warmup failed — first /chat will be slow: {exc}")
+    yield
+
+
+app = FastAPI(title="Lit-Agent", version="2.0.0", lifespan=lifespan)
 
 app.include_router(chat.router, prefix="/api")
 app.include_router(library.router, prefix="/api")
